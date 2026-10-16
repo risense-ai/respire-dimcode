@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/respire.py\" SessionStart",
+            "timeout": 15,
+            "statusMessage": "respire:注入记忆层简则"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/respire.py\" UserPromptSubmit",
+            "timeout": 15,
+            "statusMessage": "respire:检索记忆中"
+          }
+        ]
+      }
+    ]
+  }
+}
