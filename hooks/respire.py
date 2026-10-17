@@ -239,9 +239,13 @@ def main() -> None:
     try:
         event = (sys.argv[1] if len(sys.argv) > 1 else "") or os.environ.get("DIM_HOOK_EVENT", "")
         try:
-            raw = "" if sys.stdin.isatty() else sys.stdin.read()
+            # 事件 JSON 恒为 UTF-8；Windows 非 UTF-8 区域（如 cp1252）下 read() 会按本地码页误解码
+            raw = "" if sys.stdin.isatty() else sys.stdin.buffer.read().decode("utf-8", "replace")
         except Exception:
-            raw = ""
+            try:
+                raw = "" if sys.stdin.isatty() else sys.stdin.read()
+            except Exception:
+                raw = ""
         try:
             data = json.loads(raw) if raw.strip() else {}
         except Exception:
@@ -277,8 +281,13 @@ def main() -> None:
 
     if out:
         try:
-            sys.stdout.write(out)
-            sys.stdout.flush()
+            buf = getattr(sys.stdout, "buffer", None)
+            if buf is None:
+                sys.stdout.write(out)
+                sys.stdout.flush()
+            else:
+                buf.write(out.encode("utf-8"))
+                buf.flush()
         except Exception:
             pass
     sys.exit(0)  # 恒 exit 0：纯文本 stdout 即 additionalContext，无文本即无决策
