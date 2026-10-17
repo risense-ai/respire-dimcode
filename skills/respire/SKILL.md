@@ -1,6 +1,6 @@
 ---
 name: respire
-description: respire（rsrs）本地加密记忆操作法。每轮自动召回已随 prompt 注入；未见注入或涉旧（项目、报错、约定、日期）须先 rsrs recall 可见补查，同词已有注入方才勿重复；手动翻忆 recall、落库 remember（判后即存）、读全文 show/chain、删除 forget、同步 sync、查态 status；prompt 以「记：」开头由插件直接落库，「/nomem」前缀关闭本轮召回。触发词：记忆、翻忆、recall、remember、存记忆、忘掉、同步。
+description: respire（rsrs）本地加密记忆操作法。每轮自动召回已随 prompt 注入；**未见注入、命中不贴题、或涉旧（项目、报错、约定、日期）都须换词 rsrs recall 可见补查**（同义词/上位词/英文词分路试），仅当已有注入确实相关方才勿重复；手动翻忆 recall、落库 remember（判后即存）、读全文 show/chain、删除 forget、同步 sync、查态 status；prompt 以「记：」开头由插件直接落库，「/nomem」前缀关闭本轮召回。触发词：记忆、翻忆、recall、remember、存记忆、忘掉、同步。
 ---
 
 # respire · 记忆操作法

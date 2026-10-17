@@ -62,6 +62,10 @@ check "缺模型注入装法" "$(RESPITE_FAKE_NO_MODEL=1 run SessionStart)" "含
 check "缺模型点明词面回退" "$(RESPITE_FAKE_NO_MODEL=1 run SessionStart)" "含:词面档"
 check "有货库不带空库引导" "$(run SessionStart)" "不含:记忆库还是空的"
 check "空库注入首日引导" "$(RESPITE_FAKE_EMPTY=1 run SessionStart)" "含:记忆库还是空的"
+check "探测失败注入冷启诊断段" "$(RESPITE_FAKE_PROBE_FAIL=1 run SessionStart)" "含:状态探测失败"
+# 日志留痕：任一事件后 hook.log 应有本行
+run SessionStart >/dev/null
+check "hook.log 留痕" "$(tail -1 "$ROOT/hooks/hook.log" 2>/dev/null)" '含:"ev": "session"'
 
 # 引擎缺失分支：单元注入 monkeypatch find_rsrs→None（真机造不出「全路径皆缺」）
 check "引擎缺失注入装法" "$(ROOT="$ROOT" "$PY3" - <<'PY'

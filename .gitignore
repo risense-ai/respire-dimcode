@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 *.bak*
 .DS_Store
+hooks/hook.log
