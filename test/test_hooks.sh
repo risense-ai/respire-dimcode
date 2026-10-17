@@ -99,6 +99,7 @@ print("OK" if m and int(m.group(1))==n else "BAD")')" "含:OK"
 check "无关 prompt 不注入" "$(run UserPromptSubmit "今晚吃什么菜好呢")" "空"
 check "单字 prompt 跳过" "$(run UserPromptSubmit "嗯")" "空"
 check "/nomem 关闭召回" "$(run UserPromptSubmit "/nomem rsrs 信封结构")" "空"
+check "技能指认轮剥前缀仍召回" "$(run UserPromptSubmit '$skill: 笔痕 修一下这张图的字')" "含:自动召回"
 check "坏 stdin 静默" "$(printf 'not-json{{{' | RESPITE_CONFIG="$CFG_ON" "$PY3" "$ROOT/hooks/respire.py" UserPromptSubmit)" "空"
 check "未知事件静默" "$(run PreToolUse "rsrs 信封")" "空"
 

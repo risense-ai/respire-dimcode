@@ -23,7 +23,7 @@ LOG_MAX = 256 * 1024  # hook.log 超此整文件清轮
 
 DEFAULTS = {
     "rsrs": "",                 # respire 引擎（rsrs）路径；空 = 自动探测
-    "recall_threshold": 0.34,   # 召回注入下限（实测：短查询强相关 0.45–0.61、长指令句正主衰减至 0.36–0.38、真无关 rsrs 自带 skip；高阈值会拦长句正主）
+    "recall_threshold": 0.31,   # 召回注入下限（0.34 曾拦真相关：技能轮「笔痕v1.2.0」0.32；无关 rsrs 自带 skip；只拦极端低分）
     "recall_limit": 5,          # 取前 N 条
     "min_prompt_chars": 2,      # 过短不检索（1 字才跳；2 字起即查，rsrs 自带 skip 门、本地 100–400ms）
     "session_rules": True,      # SessionStart 是否注入用法简则
@@ -35,6 +35,8 @@ DEFAULTS = {
 STORE_PREFIX = re.compile(r"^(?:记|存|记录|记住|remember)\s*[:：]\s*", re.I)
 # 本轮跳过召回
 SKIP_PREFIX = re.compile(r"^(?:/nomem|#nomem)\b")
+# Dim 技能指认前缀：$skill: 名称 后才是真任务——技能名会词面污染召回 query，须剥掉
+SKILL_PREFIX = re.compile(r"^\$\s*skill\s*:\s*\S+\s*", re.I)
 
 RULES = """【respire 记忆层 · 已挂接】本机 respire（rsrs）记忆库随本会话生效；数据本地加密、云端同步（账号注册与登录不归本层管，见 rsrs.rs）。
 1. 答前先翻忆：rsrs recall "项目名+关键词"（--json 结构化、--titles 只要 id+标题）；报错、异常先按报错原文翻忆。
@@ -221,7 +223,7 @@ def do_recall(bin_path: str, prompt: str, cfg: dict) -> str:
     if not keep:
         log_event(cfg, "recall",
                   "skip" if doc.get("status") == "skip" else "below_thr",
-                  f"max={max_score:.3f} thr={thr:g}", ms)
+                  f"max={max_score:.3f} thr={thr:g} q={prompt[:40]}", ms)
         return ""
     budget = int(cfg["budget_chars"])
     lines, used = [], 90  # 90 留给头行上界，砍点据此提前
@@ -239,7 +241,7 @@ def do_recall(bin_path: str, prompt: str, cfg: dict) -> str:
         return ""
     head = (f"【respire·自动召回】命中 {len(lines)} 条（阈值 {thr:g}；标题档，"
             "正文 rsrs show <短id> 按需读；分数是相关度不是可信度）：")
-    log_event(cfg, "recall", "hit", f"n={len(lines)} max={max_score:.3f}", ms)
+    log_event(cfg, "recall", "hit", f"n={len(lines)} max={max_score:.3f} q={prompt[:40]}", ms)
     return "\n".join([head] + lines)
 
 
@@ -314,7 +316,8 @@ def on_prompt(data: dict, cfg: dict, engine) -> str:
     if not engine:
         log_event(cfg, "recall", "engine_missing", prompt[:40])
         return ""
-    return do_recall(engine, prompt, cfg)
+    query = SKILL_PREFIX.sub("", prompt).strip() or prompt  # 技能指认轮剥前缀，防技能名污染 query
+    return do_recall(engine, query, cfg)
 
 
 def main() -> None:

@@ -101,6 +101,7 @@ if [ -n "$NEW" ]; then
   if [ -n "$RESTORE_BAK" ] && [ -f "$RESTORE_BAK/hooks/respire.config.json" ]; then
     cp "$RESTORE_BAK/hooks/respire.config.json" "$NEW/hooks/respire.config.json"
     echo "已恢复既有配置：$NEW/hooks/respire.config.json"
+    echo "注：从旧版升级时新默认值（如阈值 0.31）不会自动套用——如未自定义过，建议 rm 该文件或 cp respire.config.example.json respire.config.json 后按需改。"
   elif [ ! -f "$NEW/hooks/respire.config.json" ] && [ -f "$NEW/hooks/respire.config.example.json" ]; then
     cp "$NEW/hooks/respire.config.example.json" "$NEW/hooks/respire.config.json"
     echo "已生成配置：$NEW/hooks/respire.config.json（改完新会话生效）"
