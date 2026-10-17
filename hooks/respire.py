@@ -23,7 +23,7 @@ LOG_MAX = 256 * 1024  # hook.log 超此整文件清轮
 
 DEFAULTS = {
     "rsrs": "",                 # respire 引擎（rsrs）路径；空 = 自动探测
-    "recall_threshold": 0.31,   # 召回注入下限（0.34 曾拦真相关：技能轮「笔痕v1.2.0」0.32；无关 rsrs 自带 skip；只拦极端低分）
+    "recall_threshold": 0.0,    # 召回下限，0=默认关（rsrs 直出）：skip 门管无关、limit 限流、标题档廉价；设正数才启用过滤
     "recall_limit": 5,          # 取前 N 条
     "min_prompt_chars": 2,      # 过短不检索（1 字才跳；2 字起即查，rsrs 自带 skip 门、本地 100–400ms）
     "session_rules": True,      # SessionStart 是否注入用法简则
@@ -207,7 +207,7 @@ def do_recall(bin_path: str, prompt: str, cfg: dict) -> str:
     if not isinstance(details, list):
         log_event(cfg, "recall", "bad_details", "", ms)
         return ""
-    thr = float(cfg["recall_threshold"])
+    thr = float(cfg["recall_threshold"])   # 0=直出不过滤；噪音边界交给 rsrs 自带 skip 门＋limit＋标题档
     keep = []
     max_score = 0.0
     for d in details:
@@ -239,7 +239,8 @@ def do_recall(bin_path: str, prompt: str, cfg: dict) -> str:
     if not lines:
         log_event(cfg, "recall", "budget_empty", "", ms)
         return ""
-    head = (f"【respire·自动召回】命中 {len(lines)} 条（阈值 {thr:g}；标题档，"
+    gate = f"阈值 {thr:g}，" if thr > 0 else "rsrs 直出，"
+    head = (f"【respire·自动召回】命中 {len(lines)} 条（{gate}标题档，"
             "正文 rsrs show <短id> 按需读；分数是相关度不是可信度）：")
     log_event(cfg, "recall", "hit", f"n={len(lines)} max={max_score:.3f} q={prompt[:40]}", ms)
     return "\n".join([head] + lines)

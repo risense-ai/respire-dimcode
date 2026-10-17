@@ -9,7 +9,7 @@
 | 时机 | 行为 |
 | --- | --- |
 | `SessionStart` | 注入记忆层简则（何时翻忆、如何落库、红线），对整会话生效；并**探测登录态**（`rsrs status`，实测 174–451ms）——未登录才另附引导段（去 rsrs.rs 注册、`rsrs register` 首设备、`rsrs login --oauth --no-open` 代开授权链接），已登录零打扰；并**一次探测三态**——未登录附注册引导、**库空（<10 条）附首日存料引导**（新用户首日无得忆非故障）、缺语义模型（`~/.rsrs/models/bge-m3`）附装法（`rsrs model install` ＋ `rsrs model activate m3`，未装期间引擎自带词面回退） |
-| `UserPromptSubmit` | 自动 `rsrs recall --titles`：**标题档注入**——只给分数＋8 位短 id＋标题（respire 设计：正文由 agent `rsrs show <id>` 按需取，附完整因果链）；rsrs 自带无关过滤（零命中即 skip），本层再按 0.31 阈值兜底（0.34 曾拦下 0.32 的真相关） |
+| `UserPromptSubmit` | 自动 `rsrs recall --titles`：**标题档注入**——只给分数＋8 位短 id＋标题（respire 设计：正文由 agent `rsrs show <id>` 按需取，附完整因果链）；rsrs 自带无关过滤（零命中即 skip），本层默认**直出不过滤**——噪音边界交给 rsrs skip 门＋limit 5＋标题档 |
 | `prompt` 以「记：」「存：」「remember:」开头 | 直接 `rsrs remember … --importance important` 落库并回执；判后即存判为相似时**不写入**、回执转述候选（挂靠 `--parent` 或 `--force` 直写），由模型决断 |
 | `prompt` 以 `/nomem` 开头 | 本轮跳过召回 |
 | `skills/respire` | 按需加载的操作法：recall/remember/show/forget/sync 与信封解析要点 |
@@ -63,13 +63,13 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 | 字段 | 默认 | 含义 |
 | --- | --- | --- |
 | `rsrs` | `""` | 引擎路径；空 = 自动探测（PATH → `~/.local/bin` → `~/.rsrs/bin`） |
-| `recall_threshold` | `0.31` | 召回注入下限 |
+| `recall_threshold` | `0.0` | 召回下限；**0=默认关（rsrs 直出）**，设正数才启用过滤 |
 | `recall_limit` | `5` | 取前 N 条 |
 | `min_prompt_chars` | `2` | 1 字才跳，2 字起即查 |
 | `session_rules` | `true` | 是否注入 SessionStart 简则（已有全局记忆规则时可关） |
 | `budget_chars` | `1500` | 单轮注入总预算（标题行远短于此） |
 
-阈值依据：实测 rsrs（4396 条真库）——短查询强相关 0.45–0.61，但**长指令句会把正主稀释到 0.36–0.38**（0.44 曾实证漏召），真无关 rsrs 自带 skip，故取 0.34 只作安全网。
+过滤策略：**默认不设阈值**——三层已框住噪音：rsrs 自带 skip 门（真无关零命中）、limit 5 限流、标题档一行 40 字成本趋零。历史教训：阈值 0.56→0.31 每降一次都是真相关被拦的补救（长句正主 0.36、笔痕条 0.32 皆曾误伤），漏召代价远大于多看两行标题。想要更净可自设正数下限。
 
 ## 卸载
 

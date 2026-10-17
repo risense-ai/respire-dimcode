@@ -89,6 +89,7 @@ PY
 out=$(run UserPromptSubmit "rsrs 信封 JSON 结构解析取哪层")
 check "相关 prompt 触发召回" "$out" "非空"
 check "注入为标题档无正文" "$out" "不含:｜"
+check "默认直出无阈值拦截" "$out" "含:rsrs 直出"
 check "召回头行与条数一致" "$(printf '%s' "$out" | python3 -c '
 import re,sys
 s=sys.stdin.read(); head=s.split("\n",1)[0]
