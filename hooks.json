@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/respire.py\" SessionStart",
-            "timeout": 15,
+            "timeout": 20,
             "statusMessage": "respire:注入记忆层简则"
           }
         ]
@@ -20,7 +20,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/respire.py\" UserPromptSubmit",
-            "timeout": 15,
+            "timeout": 20,
             "statusMessage": "respire:检索记忆中"
           }
         ]

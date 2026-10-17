@@ -81,6 +81,13 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 - **`${CLAUDE_PLUGIN_ROOT}` 占位符**：Dim 运行时替换为插件安装根，跨机器自洽，不动用户自己的 `hooks.json`
 - **字段逐个依协议**：Dim 的 hooks 配置校验严格，任一违例整文件拒载——改 `hooks.json` 后须重装（复制安装）
 
+## 已知边界
+
+- **召回质量是引擎上限**：用词鸿沟（如「远程连接」↔「手机遥控/remote」）下 BGE-M3 可能漏召真条而被同域条霸屏——hook 无法治本，简则已约束模型「命中不贴题换词补查」（同义词/上位词/英文词分路）
+- **冷启动窗**：runtime 冷启＋模型加载实测 7s+，故 Dim hook timeout 20s、recall 14s、probe 10s；仍失败时 SessionStart 注入「状态探测失败」诊断段
+- **PostCompact 不可重注**（Dim 协议该事件仅副作用）：长会话压缩后简则如丢失，开新会话即复
+- **留痕**：`hooks/hook.log` 每事件一行（ts/ev/out/ms/d），超 256KB 清轮；`log:false` 关闭——「时灵时不灵」按行复盘
+
 ## 测试
 
 ```bash
