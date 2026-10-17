@@ -6,6 +6,42 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAME="respire"
 
+# 首次使用引导：①端侧模型 ②注册登录 ③导入既有记忆（LLM 代抽）
+print_guide() {
+  cat <<'GUIDE_EOF'
+
+================ 首次使用 · 三件事 ================
+① 端侧模型（建议装，召回效果更好）
+   rsrs model install && rsrs model activate m3
+   约 1.1GB 端侧推理；不装也不挡用——自动回退词面档（SessionStart 会提示）。
+
+② 注册登录（跨设备同步）
+   去 https://rsrs.rs 注册 → 本机跑 rsrs register（首台设备，密码与超级密码本人设）
+   日常登录 rsrs login（浏览器授权）；rsrs status 查态。未登录时插件会注入引导。
+
+③ 导入既有记忆与规则（一次成库，让 Dim 的 LLM 代抽）
+   开一个 Dim 新会话，把下面整段粘进去：
+   ┌─────────────────────────────────────────────
+   │ 请把本机 Dim 的既有规则与记忆导入 respire：逐个读取——
+   │ ~/AGENTS.md（家目录规则，若在）、你常用项目根下的 AGENTS.md、
+   │ ~/.dimcode/v2/skills/*/SKILL.md（技能知识）、~/.dimcode/v2/hooks.json（钩子策略）、
+   │ ~/.dimcode/v2/notes/ 与 ~/.dimcode/v2/plan-drafts/ 下的 md（笔记与计划）；
+   │ 抽出可复用的事实、约定、教训与红线（口令、证件号、卡号、私钥一律排除、只记位置），
+   │ 去重后用 rsrs remember 分条存入（--importance important，标题按事实句抽取；
+   │ 判重给候选时先决断挂靠或合并），存完给我一份清单。
+   └─────────────────────────────────────────────
+===================================================
+GUIDE_EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --guide) print_guide; exit 0 ;;
+    -h|--help) echo "用法: ./install.sh [--guide]  （--guide 只打印首次使用三件事，不安装）"; exit 0 ;;
+    *) echo "未知参数：$1" >&2; exit 1 ;;
+  esac
+done
+
 # 插件安装根随发行版而异（实测 CN 落 ~/.dimcode/v2/plugins，源码默认 ~/.agents/plugins），逐一探测
 find_installed() {
   local d
@@ -78,3 +114,6 @@ echo "  ls \"${NEW:-~/.dimcode/v2/plugins/respire}\"      # manifest、hooks.jso
 echo "  echo '{\"prompt\":\"respire 测试\"}' | python3 \"${NEW:-~/.dimcode/v2/plugins/respire}/hooks/respire.py\" UserPromptSubmit"
 echo "  注：dim 无 plugin list 子命令；dim hooks list 只列 project/user 两路、不列插件钩子（皆为 Dim 现状）。插件本体在 TUI/Desktop 插件面板查，生效与否看新会话实测。"
 echo "新会话起生效。回执：「记：…」即落库；/nomem 关本轮召回。"
+echo
+echo "首次使用请完成三件事（随时可看：./install.sh --guide）："
+print_guide

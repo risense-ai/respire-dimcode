@@ -44,6 +44,14 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 
 **新会话起生效。** 插件装入 `~/.dimcode/v2/plugins/respire/`（CN 发行版；Global 为 `~/.dim/v2/plugins/`，源码默认 `~/.agents/plugins/`。复制安装，改源码需重装）。
 
+## 首次使用 · 三件事
+
+`./install.sh` 装完即打印（随时 `./install.sh --guide` 重看）：
+
+1. **端侧模型**（建议装、效果更好）：`rsrs model install && rsrs model activate m3`——约 1.1GB；不装自动回退词面档，插件在会话内提示。
+2. **注册登录**（跨设备同步）：[rsrs.rs](https://rsrs.rs) 注册 → 本机 `rsrs register`；日常 `rsrs login` 浏览器授权。
+3. **导入既有记忆与规则（一次成库，LLM 代抽）**：开个 Dim 新会话粘贴引导词（`--guide` 输出现成整段）——agent 逐读 `~/AGENTS.md`、项目 `AGENTS.md`、`~/.dimcode/v2/skills/*/SKILL.md`、`hooks.json`、notes/plan-drafts，抽出事实、约定、教训、红线（口令证件卡号排除），去重后 `rsrs remember` 分条存入；空库首日 SessionStart 亦注入同一线索。
+
 ## 登录与同步（不归插件管）
 
 插件不代跑注册、不读写任何账号配置；但 SessionStart 会探测登录态，**未登录时在提示词里注入引导**（注册去 rsrs.rs、首设备 `rsrs register` 须本人设密码、日常登录可代跑 `rsrs login --oauth --no-open` 把授权链接交给用户）。登录后 autosync 常开，`rsrs sync` 手动双向同步，`rsrs status` 查态。

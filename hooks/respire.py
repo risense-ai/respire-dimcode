@@ -48,7 +48,7 @@ NO_RSRS = """【respire】已装配但未找到 respire 引擎（rsrs CLI），�
 
 LOGIN_NUDGE = """注意：本机 respire 尚未登录——记忆只存本机、不同步、不跨设备。引导用户：去 rsrs.rs 注册后跑 rsrs register（首台设备，密码与超级密码须本人在终端设）；日常登录可由你代跑 rsrs login --oauth --no-open，把授权链接交给用户点击。"""
 
-EMPTY_NUDGE = """注意：本机 respire 记忆库还是空的——没有记忆可召回，自动召回无动静是正常而非故障。引导：用「记：〈事实〉」由本层落库，或让 agent 先把既有项目的约定、报错教训、关键结论 rsrs remember 存上几条；有货之后每轮召回才有内容。"""
+EMPTY_NUDGE = """注意：本机 respire 记忆库还是空的——没有记忆可召回，自动召回无动静是正常而非故障。引导：用「记：〈事实〉」由本层落库，或让 agent 先把既有项目的约定、报错教训、关键结论 rsrs remember 存上几条；既有规则与记忆可一次成库——让 agent 读 ~/AGENTS.md、常用项目 AGENTS.md、~/.dimcode/v2/skills/*/SKILL.md 与 hooks.json，分析抽条后分条存入（口令证件卡号排除）；有货之后每轮召回才有内容。"""
 
 NO_MODEL = """注意：respire 语义模型（BGE-M3）未装——recall 目前仅词面档（等同 memlite 未配嵌入的回退效果）。引导安装：rsrs model install 下载模型（约 1.1GB），再 rsrs model activate m3 建索引激活，召升降为语义档。可代跑，建索引耗时较长可后台挂起。"""
 
