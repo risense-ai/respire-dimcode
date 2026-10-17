@@ -8,7 +8,7 @@
 
 | 时机 | 行为 |
 | --- | --- |
-| `SessionStart` | 注入记忆层简则（何时翻忆、如何落库、红线），对整会话生效；并**探测登录态**（`rsrs status`，实测 174–451ms）——未登录才另附引导段（去 rsrs.rs 注册、`rsrs register` 首设备、`rsrs login --oauth --no-open` 代开授权链接），已登录零打扰；并**探测语义模型**（`~/.rsrs/models/bge-m3`）——缺则附装法（`rsrs model install` ＋ `rsrs model activate m3`），未装期间引擎自带词面回退 |
+| `SessionStart` | 注入记忆层简则（何时翻忆、如何落库、红线），对整会话生效；并**探测登录态**（`rsrs status`，实测 174–451ms）——未登录才另附引导段（去 rsrs.rs 注册、`rsrs register` 首设备、`rsrs login --oauth --no-open` 代开授权链接），已登录零打扰；并**一次探测三态**——未登录附注册引导、**库空（<10 条）附首日存料引导**（新用户首日无得忆非故障）、缺语义模型（`~/.rsrs/models/bge-m3`）附装法（`rsrs model install` ＋ `rsrs model activate m3`，未装期间引擎自带词面回退） |
 | `UserPromptSubmit` | 自动 `rsrs recall --titles`：**标题档注入**——只给分数＋8 位短 id＋标题（respire 设计：正文由 agent `rsrs show <id>` 按需取，附完整因果链）；rsrs 自带无关过滤（零命中即 skip），本层再按 0.34 阈值兜底 |
 | `prompt` 以「记：」「存：」「remember:」开头 | 直接 `rsrs remember … --importance important` 落库并回执；判后即存判为相似时**不写入**、回执转述候选（挂靠 `--parent` 或 `--force` 直写），由模型决断 |
 | `prompt` 以 `/nomem` 开头 | 本轮跳过召回 |

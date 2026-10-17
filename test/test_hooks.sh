@@ -60,6 +60,8 @@ check "session_rules=false 静默" "$(run SessionStart "" "$CFG_OFF")" "空"
 check "已装模型不带提示" "$(run SessionStart)" "不含:语义模型（BGE-M3）未装"
 check "缺模型注入装法" "$(RESPITE_FAKE_NO_MODEL=1 run SessionStart)" "含:rsrs model activate m3"
 check "缺模型点明词面回退" "$(RESPITE_FAKE_NO_MODEL=1 run SessionStart)" "含:词面档"
+check "有货库不带空库引导" "$(run SessionStart)" "不含:记忆库还是空的"
+check "空库注入首日引导" "$(RESPITE_FAKE_EMPTY=1 run SessionStart)" "含:记忆库还是空的"
 
 # 引擎缺失分支：单元注入 monkeypatch find_rsrs→None（真机造不出「全路径皆缺」）
 check "引擎缺失注入装法" "$(ROOT="$ROOT" "$PY3" - <<'PY'

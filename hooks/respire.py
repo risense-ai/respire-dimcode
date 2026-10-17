@@ -40,6 +40,8 @@ NO_RSRS = """【respire】已装配但未找到 respire 引擎（rsrs CLI），�
 
 LOGIN_NUDGE = """注意：本机 respire 尚未登录——记忆只存本机、不同步、不跨设备。引导用户：去 rsrs.rs 注册后跑 rsrs register（首台设备，密码与超级密码须本人在终端设）；日常登录可由你代跑 rsrs login --oauth --no-open，把授权链接交给用户点击。"""
 
+EMPTY_NUDGE = """注意：本机 respire 记忆库还是空的——没有记忆可召回，自动召回无动静是正常而非故障。引导：用「记：〈事实〉」由本层落库，或让 agent 先把既有项目的约定、报错教训、关键结论 rsrs remember 存上几条；有货之后每轮召回才有内容。"""
+
 NO_MODEL = """注意：respire 语义模型（BGE-M3）未装——recall 目前仅词面档（等同 memlite 未配嵌入的回退效果）。引导安装：rsrs model install 下载模型（约 1.1GB），再 rsrs model activate m3 建索引激活，召升降为语义档。可代跑，建索引耗时较长可后台挂起。"""
 
 
@@ -186,18 +188,23 @@ def do_recall(bin_path: str, prompt: str, cfg: dict) -> str:
     return "\n".join([head] + lines)
 
 
-def check_login(bin_path: str):
-    """登录态探测（SessionStart 专用）：True 已登录 / False 未登录 / None 探测失败（不打扰）。
-    开销实测 174–451ms。RESPITE_FAKE_LOGGED_OUT=1 为自测后门。"""
-    if os.environ.get("RESPITE_FAKE_LOGGED_OUT") == "1":
-        return False
+def probe_status(bin_path: str):
+    """SessionStart 一次 status 两态共用（登录态＋库量；开销实测 174–451ms）。
+    返回 (logged, total)：logged True/False/None；total int/None。None=探测失败不打扰。
+    后门：RESPITE_FAKE_LOGGED_OUT=1 / RESPITE_FAKE_EMPTY=1。"""
+    fake_out = os.environ.get("RESPITE_FAKE_LOGGED_OUT") == "1"
+    fake_empty = os.environ.get("RESPITE_FAKE_EMPTY") == "1"
     try:
         r = run_rsrs(bin_path, ["status", "--json"], 6)
         doc = json.loads(r.stdout) if r.stdout else {}
-        sess = (doc.get("summary") or {}).get("session") or {}
-        return bool(sess.get("has_token")) and bool(sess.get("user"))
+        summ = doc.get("summary") or {}
+        sess = summ.get("session") or {}
+        logged = bool(sess.get("has_token")) and bool(sess.get("user"))
+        total = summ.get("local_total")
+        total = int(total) if isinstance(total, int) else None
     except Exception:
-        return None
+        return (False if fake_out else None, 0 if fake_empty else None)
+    return (False if fake_out else logged, 0 if fake_empty else total)
 
 
 def check_model():
@@ -254,9 +261,12 @@ def main() -> None:
                 out = NO_RSRS
             else:
                 out = RULES
-                if check_login(engine) is False:  # 仅未登录才附引导，已登录零打扰
+                logged, total = probe_status(engine)   # 一次 status：登录态＋库量
+                if logged is False:                    # 仅未登录才附引导，已登录零打扰
                     out += "\n" + LOGIN_NUDGE
-                if check_model() is False:        # 仅缺模型才附装法，已装零打扰
+                if total is not None and total < 10:   # 仅空库首日才附引导
+                    out += "\n" + EMPTY_NUDGE
+                if check_model() is False:             # 仅缺模型才附装法，已装零打扰
                     out += "\n" + NO_MODEL
         elif event == "UserPromptSubmit":
             out = on_prompt(data, cfg, engine)
