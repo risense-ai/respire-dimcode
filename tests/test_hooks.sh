@@ -70,6 +70,9 @@ check "探测失败注入冷启诊断段" "$(RESPITE_FAKE_PROBE_FAIL=1 run Sessi
 # 日志留痕：任一事件后 hook.log 应有本行
 run SessionStart >/dev/null
 run SessionStart >/dev/null
+run UserPromptSubmit "我的密码是 password: hunter2 这算敏感吗" >/dev/null
+check "日志脱敏口令" "$(grep -q 'hunter2' "$TMP/hook.log" && echo LEAK || echo SAFE)" "含:SAFE"
+check "日志脱敏留痕" "$(grep -q 'REDACTED' "$TMP/hook.log" && echo YES)" "含:YES"
 check "hook.log 留痕" "$(grep -q '"ev": "session"' "$TMP/hook.log" 2>/dev/null && echo YES)" "含:YES"
 
 # 引擎缺失分支：单元注入 monkeypatch find_rsrs→None（真机造不出「全路径皆缺」）

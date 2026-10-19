@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -62,6 +62,24 @@ NO_MODEL = """注意：respire 语义模型（BGE-M3）未装——现为词面�
 PROBE_FAIL = """注意：respire 状态探测失败（rsrs status 未回）——若是全新机器尚未注册，先引导用户去 rsrs.rs 注册并跑 rsrs register（首设备）；否则可能 runtime 冷启动中，首轮召回空转稍候即通，持续无回跑 rsrs doctor 诊断并转告用户。"""
 
 
+_REDACT = [
+    (re.compile(r"(?i)(password|passwd|pwd|密码|口令)\s*[:=：]\s*\S+"), r"\1=[REDACTED]"),
+    (re.compile(r"\b(sk|ghp|gho|github_pat|AKIA|xox)[A-Za-z0-9_-]{8,}\b"), "[REDACTED]"),
+    (re.compile(r"\b\d{11,19}\b"), "[NUM]"),
+]
+
+
+def redact(s: str) -> str:
+    """日志脱敏：口令式赋值、token 前缀、11-19 位长数字（手机/卡号）。
+    日志只用于诊断，绝不落明文凭据。"""
+    try:
+        for pat, rep in _REDACT:
+            s = pat.sub(rep, s)
+    except Exception:
+        pass
+    return s
+
+
 def log_event(cfg: dict, event: str, outcome: str, detail: str = "", ms=None):
     """轻量留痕：hook.log 单行 JSONL、超 256KB 整文件清轮；日志失败绝不影响主链。
     config log:false 关闭。字段：ts/ev/out/ms（耗时毫秒）/d（摘要）。"""
@@ -78,7 +96,7 @@ def log_event(cfg: dict, event: str, outcome: str, detail: str = "", ms=None):
         if ms is not None:
             rec["ms"] = int(ms)
         if detail:
-            rec["d"] = detail[:160]
+            rec["d"] = redact(detail)[:160]
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception:
