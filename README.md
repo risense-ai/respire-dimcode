@@ -22,6 +22,7 @@ dim plugin install respire@risense
 
 ```bash
 git pull
+dim plugin marketplace upgrade risense     # 刷新注册源——marketplace 装的是注册时快照，缺此步装回旧版
 dim plugin install respire@risense --overwrite
 ```
 
