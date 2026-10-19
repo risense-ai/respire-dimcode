@@ -46,7 +46,7 @@ RULES = """【respire 记忆层 · 已挂接】本机 respire（rsrs）记忆库
 5. 同步 rsrs sync（autosync 常开）、rsrs status 查态、rsrs prompt 读完整工作流；深用法见 respire 技能。"""
 
 NO_RSRS = """【respire】已装配但未找到 respire 引擎（rsrs CLI），记忆层暂不可用。
-安装：npm i -g @rsrsai/cli@latest （或在 respire 插件目录跑 ./install.sh）。可代为执行安装后继续本轮。"""
+安装：npm i -g @rsrsai/cli@latest （装完新开会话即用）。可代为执行安装后继续本轮。"""
 
 LOGIN_NUDGE = """注意：本机 respire 尚未登录——记忆只存本机、不同步、不跨设备。引导用户：去 rsrs.rs 注册后跑 rsrs register（首台设备，密码与超级密码须本人在终端设）；日常登录可由你代跑 rsrs login --oauth --no-open，把授权链接交给用户点击。"""
 
