@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -29,6 +29,7 @@ DEFAULTS = {
     "session_rules": True,      # SessionStart 是否注入用法简则
     "budget_chars": 1500,       # 单轮注入总字数预算
     "log": True,                # hook.log 轻量留痕（每事件一行，复盘时灵时不灵的抓手）
+    "enabled": True,           # 总开关：false=记忆层全线静默（Dim 插件页亦可逐组件关 hook）
 }
 
 # 显式落库前缀：prompt 以「记：」等开头 → 直接入库并回执
@@ -45,8 +46,11 @@ RULES = """【respire 记忆层 · 已挂接】本机 respire（rsrs）记忆库
 4. 口令、证件号、手机号、卡号、私钥禁入记忆正文与查询词，只写存放位置——库虽加密，密钥泄露即全裸。
 5. 同步 rsrs sync（autosync 常开）、rsrs status 查态、rsrs prompt 读完整工作流；深用法见 respire 技能。"""
 
-NO_RSRS = """【respire】已装配但未找到 respire 引擎（rsrs CLI），记忆层暂不可用。
-安装：npm i -g @rsrsai/cli@latest （装完新开会话即用）。可代为执行安装后继续本轮。"""
+NO_RSRS = """【respire·引擎未装】插件已就绪，只差引擎。请立即代为执行安装，无需等用户：
+  npm i -g @rsrsai/cli@latest
+（无全局写权限时先试：npm config set prefix ~/.npm-global && npm i -g @rsrsai/cli@latest）
+装完跑 rsrs --version 确认——本层每轮实时探测，装完同会话内即恢复召回与「记：」落库。
+配置下一步（你顺手引导即可）：rsrs status 查登录态；未登录则请用户去 https://rsrs.rs 注册后本机跑 rsrs register（首设备，密码本人设），日常 rsrs login；语义模型可选，想要更好召回再 rsrs model install && rsrs model activate m3。"""
 
 LOGIN_NUDGE = """注意：本机 respire 尚未登录——记忆只存本机、不同步、不跨设备。引导用户：去 rsrs.rs 注册后跑 rsrs register（首台设备，密码与超级密码须本人在终端设）；日常登录可由你代跑 rsrs login --oauth --no-open，把授权链接交给用户点击。"""
 
@@ -54,7 +58,7 @@ EMPTY_NUDGE = """注意：本机 respire 记忆库还是空的——没有记忆
 
 NO_MODEL = """注意：respire 语义模型（BGE-M3）未装——现为词面档。**完全可用**：注册、登录、同步与召回都不依赖模型；想要更好效果再装：rsrs model install 下载模型（约 1.1GB），再 rsrs model activate m3 建索引激活召升降为语义档（可代跑，建索引可后台挂起）。"""
 
-PROBE_FAIL = """注意：respire 状态探测失败（rsrs status 未回）——runtime 可能正在冷启动或异常。首轮召回可能空转，稍候重发即通；持续无回请跑 rsrs doctor 诊断并转告用户。"""
+PROBE_FAIL = """注意：respire 状态探测失败（rsrs status 未回）——若是全新机器尚未注册，先引导用户去 rsrs.rs 注册并跑 rsrs register（首设备）；否则可能 runtime 冷启动中，首轮召回空转稍候即通，持续无回跑 rsrs doctor 诊断并转告用户。"""
 
 
 def log_event(cfg: dict, event: str, outcome: str, detail: str = "", ms=None):
@@ -343,6 +347,9 @@ def main() -> None:
 
     try:
         cfg = load_config()
+        if not cfg.get("enabled", True):        # 总开关：关闭=全线静默（管理器档）
+            log_event(cfg, event or "unknown", "disabled")
+            raise SystemExit(0)
         engine = find_rsrs(cfg)
         if event == "SessionStart":
             if not cfg["session_rules"]:

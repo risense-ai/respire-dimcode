@@ -86,6 +86,29 @@ except SystemExit:
 PY
 )" "含:npm i -g @rsrsai/cli"
 
+CFG_OFFE="$TMP/config-disabled.json"
+echo '{"enabled": false}' > "$CFG_OFFE"
+# 引擎缺失分支：monkeypatch find_rsrs→None（真机造不出全路径皆缺，走单元注入）
+run_engineless() {
+  ROOT="$ROOT" "$PY3" - <<'PY'
+import io, json, os, sys, importlib.util
+spec = importlib.util.spec_from_file_location("respire", os.path.join(os.environ["ROOT"], "hooks/respire.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m.find_rsrs = lambda cfg: None
+sys.argv = ["respire.py", "SessionStart"]
+sys.stdin = io.StringIO('{"hook_event_name":"SessionStart"}')
+try:
+    m.main()
+except SystemExit:
+    pass
+PY
+}
+check "enabled=false 全线静默" "$(run SessionStart "" "$CFG_OFFE")" "空"
+check "enabled=false 落库也静默" "$(run UserPromptSubmit "记：关断时不应落库" "$CFG_OFFE")" "空"
+check "引擎缺失注入安装指令" "$(run_engineless)" "含:请立即代为执行安装"
+check "引擎缺失含配置下一步" "$(run_engineless)" "含:rsrs.rs 注册"
+check "probe失败含未注册分支" "$(RESPITE_FAKE_PROBE_FAIL=1 run SessionStart)" "含:尚未注册"
+
 out=$(run UserPromptSubmit "rsrs 信封 JSON 结构解析取哪层")
 check "相关 prompt 触发召回" "$out" "非空"
 check "注入为标题档无正文" "$out" "不含:｜"

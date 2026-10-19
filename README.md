@@ -41,6 +41,22 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 
 两条 Dim 现状须知（已核源码）：`dim` **无** `plugin list` 子命令；`dim hooks list` 只列 project/user 两路配置、**不列插件钩子**——list 显示空不等于钩子没挂，插件本体在 TUI / Desktop 插件页查，生效与否以新会话实测为准。
 
+## 定位：安装器 ＋ 管理器 ＋ 正常钩子
+
+插件只做三件，装完自走一条生命周期：
+
+1. **引擎未装时＝安装器**：SessionStart 把安装命令直接注给 agent 代跑（`npm i -g @rsrsai/cli@latest`＋权限兜底＋`rsrs --version` 验证），并顺手交代配置下一步（rsrs.rs 注册／`rsrs register`／模型可选）——无需用户手动操作；
+2. **检测就绪＝自动切正常钩子**：每轮实时探测，引擎装完**同会话内**即恢复简则、召回与「记：」落库；
+3. **管理器三档开关**（见下「启用与关闭」）。
+
+## 启用与关闭
+
+| 档 | 怎么关 | 范围 |
+| --- | --- | --- |
+| 单轮 | prompt 前缀 `/nomem` | 只关本轮召回 |
+| 总开关 | `hooks/respire.config.json` 设 `"enabled": false` | 记忆层全线静默（简则/召回/落库），hook.log 留 `disabled` 痕 |
+| 组件级 | Dim 插件页对 respire 的 **hook 组件**逐项开关（`skill`/`hook`/`mcp` 原生支持） | Dim 侧直接卸力 |
+
 ## 装上后发生什么
 
 | 时机 | 行为 |
@@ -74,6 +90,7 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 | `min_prompt_chars` | `2` | 1 字才跳，2 字起即查 |
 | `session_rules` | `true` | 是否注入 SessionStart 简则 |
 | `budget_chars` | `1500` | 单轮注入总预算（标题行远短于此） |
+| `enabled` | `true` | **总开关**：false=全线静默 |
 | `log` | `true` | `hooks/hook.log` 留痕（超 256KB 清轮） |
 
 过滤策略：**默认不设阈值**——三层已框住噪音：rsrs skip 门、limit 5、标题档。历史教训：阈值 0.56→0.31 每降一次都是真相关被拦的补救，漏召代价远大于多看两行标题。

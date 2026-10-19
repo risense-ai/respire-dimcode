@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — 安装器与管理器
+
+- **定位收束**：插件＝安装器＋管理器＋正常钩子——引擎未装时把安装命令与配置下一步注给 agent 代跑（同会话实时探测、装完即用）；就绪后自动走正常钩子
+- **总开关** `enabled`（false=全线静默，hook.log 留 disabled 痕）；管理三档：`/nomem` 单轮／`enabled` 总控／Dim 插件页 hook 组件开关
+- PROBE_FAIL 补「全新机器尚未注册」分支口；NO_RSRS 升级为安装指令＋配置引导
+- 升级三连须含 `marketplace upgrade`（install 吃注册时快照）
+
+## 0.3.0 — Dim 标准插件形态
 ## 0.3.0 — Dim 标准插件形态
 
 - 分发改走 Dim 标准插件市场：`dim plugin marketplace add .agents/plugins/marketplace.json` + `dim plugin install respire@risense`；**移除自定义 install.sh / uninstall.sh**
