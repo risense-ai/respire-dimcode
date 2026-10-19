@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -30,6 +30,7 @@ DEFAULTS = {
     "budget_chars": 1500,       # 单轮注入总字数预算
     "log": True,                # hook.log 轻量留痕（每事件一行，复盘时灵时不灵的抓手）
     "enabled": True,           # 总开关：false=记忆层全线静默（Dim 插件页亦可逐组件关 hook）
+    "store_nudge_every": 1,     # Stop 存储检查节流：1=每轮、N=每 N 轮一次、0=关闭（每轮=多一轮模型小调用）
 }
 
 # 显式落库前缀：prompt 以「记：」等开头 → 直接入库并回执
@@ -67,7 +68,7 @@ def log_event(cfg: dict, event: str, outcome: str, detail: str = "", ms=None):
     if not cfg.get("log", True):
         return
     try:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hook.log")
+        path = os.environ.get("RESPITE_LOG") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "hook.log")
         try:
             if os.path.exists(path) and os.path.getsize(path) > LOG_MAX:
                 os.remove(path)
@@ -299,6 +300,65 @@ def check_model():
         return None  # 探测失败不打扰
 
 
+STORE_NUDGE = ("记忆检查（自动一次）：只做一件事——若你本轮产生了新的**事实、决定、约定、教训或踩坑**，"
+               "用 rsrs remember 分条存入（--importance important；标题按「主语＋动作＋结果」事实句；"
+               "判重给候选先 rsrs 决策挂靠或 --force）；若本轮只是问答闲聊而无新事实，直接结束、勿重复作答。"
+               "存完或无需存即结束。")
+
+
+def on_stop(data: dict, cfg: dict, engine) -> str:
+    """Stop 存储检查：干完活的存储提示（block+reason 续跑一轮）。
+    规范防循环：续跑轮 stdin 带 stop_hook_active=true → 放行。"""
+    if data.get("stop_hook_active") is True:
+        log_event(cfg, "stop", "active_skip")
+        return ""
+    if not engine:
+        return ""
+    every = int(cfg.get("store_nudge_every", 1))
+    if every <= 0:
+        return ""
+    try:  # 节流计数（失败则不拦）
+        state = os.environ.get("RESPITE_NUDGE_STATE") or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), ".nudge_counter")
+        n = 0
+        try:
+            with open(state, encoding="utf-8") as f:
+                n = int((f.read() or "0").strip())
+        except Exception:
+            n = 0
+        n += 1
+        with open(state, "w", encoding="utf-8") as f:
+            f.write(str(n))
+        if n % every != 0:
+            log_event(cfg, "stop", "every_skip", f"n={n} every={every}")
+            return ""
+    except Exception:
+        pass
+    try:  # 近 10 分钟本层已落库过 → 不再催（记忆活跃）
+        logp = os.environ.get("RESPITE_LOG") or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "hook.log")
+        now = time.time()
+        if os.path.exists(logp):
+            with open(logp, encoding="utf-8", errors="replace") as f:
+                for ln in f.readlines()[-50:]:
+                    try:
+                        r = json.loads(ln)
+                    except Exception:
+                        continue
+                    if r.get("ev") == "store" and r.get("out") == "ok":
+                        try:
+                            ts = time.mktime(time.strptime(r.get("ts", ""), "%Y-%m-%dT%H:%M:%S"))
+                        except Exception:
+                            continue
+                        if now - ts < 600:
+                            log_event(cfg, "stop", "stored_recent_skip")
+                            return ""
+    except Exception:
+        pass
+    log_event(cfg, "stop", "nudge")
+    return json.dumps({"decision": "block", "reason": STORE_NUDGE}, ensure_ascii=False)
+
+
 def on_prompt(data: dict, cfg: dict, engine) -> str:
     prompt = data.get("prompt")
     if not isinstance(prompt, str):
@@ -377,6 +437,8 @@ def main() -> None:
                 log_event(cfg, "session", "ok", "segs=" + (",".join(segs) or "none"))
         elif event == "UserPromptSubmit":
             out = on_prompt(data, cfg, engine)
+        elif event == "Stop":
+            out = on_stop(data, cfg, engine)
         else:
             out = ""
     except Exception as e:

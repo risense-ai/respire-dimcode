@@ -64,6 +64,7 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 | `SessionStart` | 注入记忆层简则（何时翻忆、如何落库、红线），对整会话与 subagent 生效；**一次探测三态**——未登录附注册引导（rsrs.rs 注册、`rsrs register` 首设备、`rsrs login --oauth --no-open` 代开授权链接）、库空（<10 条）附首日存料与导入引导、缺语义模型附**可选**装法；常态零打扰 |
 | `UserPromptSubmit` | 自动 `rsrs recall --titles`：**标题档注入**——只给分数＋8 位短 id＋标题，正文由 agent `rsrs show <id>` 按需取（附因果链）；默认**直出不过滤**，噪音边界＝rsrs skip 门＋limit 5＋标题档 |
 | `prompt` 以「记：」「存：」「remember:」开头 | 直接 `rsrs remember … --importance important` 落库并回执；判后即存判为相似时**不写入**、回执转述候选（`--parent` 挂靠或 `--force` 直写），由模型决断；回执硬约束 AI 抽「主语＋动作＋结果」事实句 `retitle` 替换暂拟题 |
+| `Stop`（AI 干完活） | **存储检查**：`block+reason` 续跑一轮，提示模型把本轮新的**事实/决定/约定/教训/踩坑**分条 `rsrs remember`（事实句标题、判重先决断）；闲聊无新事实则直接结束。规范防循环：续跑轮 `stop_hook_active=true` 即放行；节流 `store_nudge_every`（默认 1=每轮，N=每 N 轮，0=关）；近 10 分钟本层已落库过则不再催 |
 | `prompt` 以 `/nomem` 开头 | 本轮跳过召回 |
 | `prompt` 带 `$skill: 名称` | 召回前剥除前缀——技能名词面会撞技能记忆 |
 | `skills/respire` | 按需加载的操作法（recall/remember/show/forget/sync 与信封解析要点）；**注意技能只是说明书，动作全由钩子驱动** |
@@ -91,6 +92,7 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 | `session_rules` | `true` | 是否注入 SessionStart 简则 |
 | `budget_chars` | `1500` | 单轮注入总预算（标题行远短于此） |
 | `enabled` | `true` | **总开关**：false=全线静默 |
+| `store_nudge_every` | `1` | Stop 存储检查节流：1=每轮、N=每 N 轮、0=关（每轮=多一轮模型小调用） |
 | `log` | `true` | `hooks/hook.log` 留痕（超 256KB 清轮） |
 
 过滤策略：**默认不设阈值**——三层已框住噪音：rsrs skip 门、limit 5、标题档。历史教训：阈值 0.56→0.31 每降一次都是真相关被拦的补救，漏召代价远大于多看两行标题。

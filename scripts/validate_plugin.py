@@ -90,7 +90,7 @@ if manifest:
 hooks_cfg = parse_json("hooks/hooks.json")
 if hooks_cfg:
     events = hooks_cfg.get("hooks") or {}
-    if set(events) - {"SessionStart", "UserPromptSubmit"}:
+    if set(events) - {"SessionStart", "UserPromptSubmit", "Stop"}:
         fail(f"unexpected events: {sorted(set(events) - {'SessionStart', 'UserPromptSubmit'})}")
     else:
         ok("hook events subset")

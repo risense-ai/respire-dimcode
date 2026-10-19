@@ -7,3 +7,4 @@ __pycache__/
 .omo/
 .codegraph/
 hooks/hook.log
+hooks/.nudge_counter

@@ -25,7 +25,7 @@ echo '{"session_rules": false}' > "$CFG_OFF"
 # run <event> [prompt] [config]
 run() {
   local ev="$1" pr="${2-}" cfg="${3:-$CFG_ON}"
-  "$PY3" - "$ev" "$pr" <<'PY' | RESPITE_CONFIG="$cfg" "$PY3" "$ROOT/hooks/respire.py" "$ev"
+  "$PY3" - "$ev" "$pr" <<'PY' | RESPITE_CONFIG="$cfg" RESPITE_LOG="$TMP/hook.log" RESPITE_NUDGE_STATE="$TMP/nudge" "$PY3" "$ROOT/hooks/respire.py" "$ev"
 import json, sys
 ev, pr = sys.argv[1], sys.argv[2]
 d = {"hook_event_name": ev, "cwd": "/tmp", "session_id": "selftest"}
@@ -69,7 +69,8 @@ check "包内无自定义安装脚本" "$(ls "$ROOT"/install.sh "$ROOT"/uninstal
 check "探测失败注入冷启诊断段" "$(RESPITE_FAKE_PROBE_FAIL=1 run SessionStart)" "含:状态探测失败"
 # 日志留痕：任一事件后 hook.log 应有本行
 run SessionStart >/dev/null
-check "hook.log 留痕" "$(tail -1 "$ROOT/hooks/hook.log" 2>/dev/null)" '含:"ev": "session"'
+run SessionStart >/dev/null
+check "hook.log 留痕" "$(grep -q '"ev": "session"' "$TMP/hook.log" 2>/dev/null && echo YES)" "含:YES"
 
 # 引擎缺失分支：单元注入 monkeypatch find_rsrs→None（真机造不出「全路径皆缺」）
 check "引擎缺失注入装法" "$(ROOT="$ROOT" "$PY3" - <<'PY'
@@ -103,6 +104,28 @@ except SystemExit:
     pass
 PY
 }
+# Stop 存储检查：<stop_hook_active>
+run_stop() {
+  "$PY3" - "$1" <<'PY' | RESPITE_CONFIG="$CFG_ON" RESPITE_LOG="$TMP/hook.log" RESPITE_NUDGE_STATE="$TMP/nudge" "$PY3" "$ROOT/hooks/respire.py" Stop
+import json, sys
+print(json.dumps({"hook_event_name": "Stop", "stop_hook_active": sys.argv[1] == "true"}))
+PY
+}
+check "Stop 存储检查续跑" "$(run_stop false)" '含:"decision": "block"'
+check "Stop 提示含存储指令" "$(run_stop false)" "含:rsrs remember"
+check "Stop 防重入放行" "$(run_stop true)" "空"
+CFG_NUDGE0="$TMP/config-nudge0.json"
+echo '{"store_nudge_every": 0}' > "$CFG_NUDGE0"
+run_stop_cfg() {   # $1=config
+  local cfg="$1"
+  "$PY3" - <<'PY' | RESPITE_CONFIG="$cfg" RESPITE_LOG="$TMP/hook.log" RESPITE_NUDGE_STATE="$TMP/nudge" "$PY3" "$ROOT/hooks/respire.py" Stop
+import json
+print(json.dumps({"hook_event_name": "Stop", "stop_hook_active": False}))
+PY
+}
+check "Stop 节流关闭静默" "$(run_stop_cfg "$CFG_NUDGE0")" "空"
+printf '%s\n' '{"ts": "'"$(date +%Y-%m-%dT%H:%M:%S)"'", "ev": "store", "out": "ok", "d": "feed"}' >> "$TMP/hook.log"
+check "Stop 已存放行放行" "$(run_stop false)" "空"
 check "enabled=false 全线静默" "$(run SessionStart "" "$CFG_OFFE")" "空"
 check "enabled=false 落库也静默" "$(run UserPromptSubmit "记：关断时不应落库" "$CFG_OFFE")" "空"
 check "引擎缺失注入安装指令" "$(run_engineless)" "含:请立即代为执行安装"

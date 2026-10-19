@@ -26,6 +26,19 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/respire.py\" Stop || python \"${CLAUDE_PLUGIN_ROOT}/hooks/respire.py\" Stop",
+            "commandWindows": "py -3 \"${CLAUDE_PLUGIN_ROOT}/hooks/respire.py\" Stop || python \"${CLAUDE_PLUGIN_ROOT}/hooks/respire.py\" Stop",
+            "timeout": 20,
+            "statusMessage": "respire:存储检查"
+          }
+        ]
+      }
     ]
   }
 }

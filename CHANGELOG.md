@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 — 干完活也要存（Stop 钩子）
+
+- 生命周期补齐：用户说话→注入召回（UserPromptSubmit）；**AI 干完活→注入存储检查**（Stop）——
+  `block+reason` 续跑一轮，提示把本轮新事实/决定/约定/教训/踩坑分条 `rsrs remember`
+- 规范防循环：续跑轮 `stop_hook_active=true` 放行；实测纯文本注入在 Stop 不可见、必须 block+reason
+- 节流 `store_nudge_every`（默认每轮，可调 N/0）；近 10 分钟已落库则不再催
+- 测试日志与节流状态可经 `RESPITE_LOG`／`RESPITE_NUDGE_STATE` 隔离；47 断言
+
+## 0.4.0 — 安装器与管理器
 ## 0.4.0 — 安装器与管理器
 
 - **定位收束**：插件＝安装器＋管理器＋正常钩子——引擎未装时把安装命令与配置下一步注给 agent 代跑（同会话实时探测、装完即用）；就绪后自动走正常钩子
