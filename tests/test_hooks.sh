@@ -132,6 +132,8 @@ check "Stop 已存放行放行" "$(run_stop false)" "空"
 check "enabled=false 全线静默" "$(run SessionStart "" "$CFG_OFFE")" "空"
 check "enabled=false 落库也静默" "$(run UserPromptSubmit "记：关断时不应落库" "$CFG_OFFE")" "空"
 check "引擎缺失注入安装指令" "$(run_engineless)" "含:请立即代为执行安装"
+check "引导禁自造超级密码" "$(run_engineless)" "含:绝不传 --super"
+check "引导要求保存恢复码" "$(run_engineless)" "含:务必抄下保存"
 check "引擎缺失含配置下一步" "$(run_engineless)" "含:rsrs.rs 注册"
 check "probe失败含未注册分支" "$(RESPITE_FAKE_PROBE_FAIL=1 run SessionStart)" "含:尚未注册"
 

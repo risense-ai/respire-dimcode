@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -51,9 +51,9 @@ NO_RSRS = """【respire·引擎未装】插件已就绪，只差引擎。请立�
   npm i -g @rsrsai/cli@latest
 （无全局写权限时先试：npm config set prefix ~/.npm-global && npm i -g @rsrsai/cli@latest）
 装完跑 rsrs --version 确认——本层每轮实时探测，装完同会话内即恢复召回与「记：」落库。
-配置下一步（你顺手引导即可）：rsrs status 查登录态；未登录则请用户去 https://rsrs.rs 注册后本机跑 rsrs register（首设备，密码本人设），日常 rsrs login；语义模型可选，想要更好召回再 rsrs model install && rsrs model activate m3。"""
+配置下一步（你顺手引导即可）：rsrs status 查登录态；未登录则请用户去 https://rsrs.rs 注册后本机跑 rsrs register --user <名>（登录密码本人设≥8位；**超级密码绝不自造、绝不传 --super**——系统自动生成 A3-… 恢复码并在输出中醒目列出，**务必抄下保存**，丢失则任何设备都解不开记忆）；日常 rsrs login；语义模型可选，想要更好召回再 rsrs model install && rsrs model activate m3。若已误填自定义超级密码，跑 rsrs super-reset 重发 A3 码。"""
 
-LOGIN_NUDGE = """注意：本机 respire 尚未登录——记忆只存本机、不同步、不跨设备。引导用户：去 rsrs.rs 注册后跑 rsrs register（首台设备，密码与超级密码须本人在终端设）；日常登录可由你代跑 rsrs login --oauth --no-open，把授权链接交给用户点击。"""
+LOGIN_NUDGE = """注意：本机 respire 尚未登录——记忆只存本机、不同步、不跨设备。引导用户：去 rsrs.rs 注册后跑 rsrs register（登录密码本人设；**超级密码由系统自动生成 A3-… 恢复码，不要自造，务必保存**）；日常登录可由你代跑 rsrs login --oauth --no-open，把授权链接交给用户点击。"""
 
 EMPTY_NUDGE = """注意：本机 respire 记忆库还是空的——没有记忆可召回，自动召回无动静是正常而非故障。引导：用「记：〈事实〉」由本层落库，或让 agent 先把既有项目的约定、报错教训、关键结论 rsrs remember 存上几条；既有规则与记忆可一次成库——让 agent 读 ~/AGENTS.md、常用项目 AGENTS.md、~/.dimcode/v2/skills/*/SKILL.md 与 hooks.json，分析抽条后分条存入（口令证件卡号排除）；有货之后每轮召回才有内容。"""
 
