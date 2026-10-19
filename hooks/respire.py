@@ -52,7 +52,7 @@ LOGIN_NUDGE = """注意：本机 respire 尚未登录——记忆只存本机、
 
 EMPTY_NUDGE = """注意：本机 respire 记忆库还是空的——没有记忆可召回，自动召回无动静是正常而非故障。引导：用「记：〈事实〉」由本层落库，或让 agent 先把既有项目的约定、报错教训、关键结论 rsrs remember 存上几条；既有规则与记忆可一次成库——让 agent 读 ~/AGENTS.md、常用项目 AGENTS.md、~/.dimcode/v2/skills/*/SKILL.md 与 hooks.json，分析抽条后分条存入（口令证件卡号排除）；有货之后每轮召回才有内容。"""
 
-NO_MODEL = """注意：respire 语义模型（BGE-M3）未装——recall 目前仅词面档（等同 memlite 未配嵌入的回退效果）。引导安装：rsrs model install 下载模型（约 1.1GB），再 rsrs model activate m3 建索引激活，召升降为语义档。可代跑，建索引耗时较长可后台挂起。"""
+NO_MODEL = """注意：respire 语义模型（BGE-M3）未装——现为词面档。**完全可用**：注册、登录、同步与召回都不依赖模型；想要更好效果再装：rsrs model install 下载模型（约 1.1GB），再 rsrs model activate m3 建索引激活召升降为语义档（可代跑，建索引可后台挂起）。"""
 
 PROBE_FAIL = """注意：respire 状态探测失败（rsrs status 未回）——runtime 可能正在冷启动或异常。首轮召回可能空转，稍候重发即通；持续无回请跑 rsrs doctor 诊断并转告用户。"""
 

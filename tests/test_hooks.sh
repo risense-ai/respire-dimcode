@@ -63,9 +63,9 @@ check "缺模型点明词面回退" "$(RESPITE_FAKE_NO_MODEL=1 run SessionStart)
 check "有货库不带空库引导" "$(run SessionStart)" "不含:记忆库还是空的"
 check "空库注入首日引导" "$(RESPITE_FAKE_EMPTY=1 run SessionStart)" "含:记忆库还是空的"
 check "空库引导含导入线索" "$(RESPITE_FAKE_EMPTY=1 run SessionStart)" "含:分析抽条"
-check "install --guide 含端侧模型" "$(bash "$ROOT/install.sh" --guide)" "含:端侧模型"
-check "install --guide 含注册登录" "$(bash "$ROOT/install.sh" --guide)" "含:rsrs.rs 注册"
-check "install --guide 含导入提示词" "$(bash "$ROOT/install.sh" --guide)" "含:导入既有记忆与规则"
+check "README 载三件事(模型可选)" "$(cat "$ROOT/README.md")" "含:不装模型完全可用"
+check "README 载标准装法" "$(cat "$ROOT/README.md")" "含:dim plugin install respire@risense"
+check "包内无自定义安装脚本" "$(ls "$ROOT"/install.sh "$ROOT"/uninstall.sh 2>&1)" "含:No such file"
 check "探测失败注入冷启诊断段" "$(RESPITE_FAKE_PROBE_FAIL=1 run SessionStart)" "含:状态探测失败"
 # 日志留痕：任一事件后 hook.log 应有本行
 run SessionStart >/dev/null

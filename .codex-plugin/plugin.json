@@ -1,0 +1,20 @@
+{
+  "name": "respire",
+  "version": "0.3.0",
+  "description": "respire memory for Dim: every-round title-tier recall, one-prefix store, degradation without models. Register on rsrs.rs for sync; the sidecar model is an optional boost.",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "respire",
+    "shortDescription": "吸即存，呼即取——给 Dim agent 装上本地加密记忆",
+    "developerName": "risense-ai",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/risense-ai/respire-dimcode",
+    "defaultPrompt": [
+      "之前我们是怎么处理这个问题的？",
+      "记：把刚才这个结论存进记忆。",
+      "翻忆一下上周定的约定。"
+    ]
+  }
+}

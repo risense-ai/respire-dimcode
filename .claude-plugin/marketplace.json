@@ -1,0 +1,17 @@
+{
+  "name": "risense",
+  "owner": {
+    "name": "risense-ai"
+  },
+  "metadata": {
+    "description": "risense-ai Dim plugins",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "respire",
+      "source": "./",
+      "description": "respire memory for Dim: title-tier recall every round, one-prefix store, model-optional degradation."
+    }
+  ]
+}
