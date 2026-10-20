@@ -1,5 +1,10 @@
 # Changelog
 
+## 未发布 — 同仓加 Qoder 版（`respire-qoder/`）
+
+- Dim 根插件不动；新增 `respire-qoder/` 子目录为 Qoder 插件形态（`.qoder-plugin/plugin.json`＋marketplace 清单、`${QODER_PLUGIN_ROOT}`、Stop 用 `decision: deny`、`skip_prefixes` 内部提示白名单）
+- 独立仓：risense-ai/respire-qoder
+
 ## 0.5.0 — 干完活也要存（Stop 钩子）
 
 - 生命周期补齐：用户说话→注入召回（UserPromptSubmit）；**AI 干完活→注入存储检查**（Stop）——

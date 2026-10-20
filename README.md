@@ -2,6 +2,17 @@
 
 > 吸即存，呼即取——给 Dim agent 装上本地加密记忆。
 
+## Qoder 版
+
+Qoder 插件形态在 `respire-qoder/` 子目录（同一仓两插件）：`.qoder-plugin/plugin.json` 清单、hooks 三段同源、Stop 用 Qoder 的 `decision: deny`、内部提示跳过白名单。装法：
+
+```bash
+qoder plugins install /absolute/path/to/respire-dimcode/respire-qoder
+```
+
+独立仓：<https://github.com/risense-ai/respire-qoder>
+
+
 `respire` 是 Dim 标准内容插件：以命令钩子把 [respire（CLI 名 rsrs）](https://www.npmjs.com/package/@rsrsai/cli) 记忆引擎挂进 agent 循环——每轮标题档自动召回、「记：」一前缀即落库。本地优先、端侧加密、云端 LWW 同步；**不带自定义安装脚本，按 Dim 插件市场标准安装**。
 
 ## 不装模型完全可用（降级是一等公民）
