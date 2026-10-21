@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3 — 提示词英文化
+
+- SKILL.md、钩子注入简则、落库/待决/召回回执全部改为英文；保留「记：」等中文前缀兼容
+- Dim 插件清单 `defaultPrompt` 与 `shortDescription` 改为英文；版本 0.5.3
+- 测试断言同步英文
+
 ## 未发布 — 同仓加 Qoder 版（`respire-qoder/`）
 
 - Dim 根插件不动；新增 `respire-qoder/` 子目录为 Qoder 插件形态（`.qoder-plugin/plugin.json`＋marketplace 清单、`${QODER_PLUGIN_ROOT}`、Stop 用 `decision: deny`、`skip_prefixes` 内部提示白名单）
