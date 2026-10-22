@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.5.3 — 市场元数据补全与插件图标
+## 0.5.3 — 提示词英文化＋市场元数据与图标
 
-- `interface.logo` 指向新增 `assets/logo.png`（512x512，Dim 插件列表显示）；顶层补 `author`/`homepage`/`repository`/`license`/`keywords`，interface 补 `longDescription`
+- SKILL.md、钩子注入简则、落库/待决/召回回执全部改为英文；保留「记：」等中文前缀兼容
+- Dim 插件清单 `defaultPrompt` 与 `shortDescription` 改为英文；测试断言同步英文并去 locale/实时库依赖
+- `interface.logo` 指向新增 `assets/logo.png`（512x512，Dim 插件列表显示）；顶层补 `author`/`homepage`/`repository`/`license`/`keywords`，interface 补 `longDescription`（英文）
 - CI：`.github/workflows/release.yml`——push tag（`*.*.*`）自动打包出 Release（`scripts/package.sh` 共用口径）；push main/PR 跑自检；`workflow_dispatch` 出 artifact 演练
 - 打包清单含 `assets/`
 

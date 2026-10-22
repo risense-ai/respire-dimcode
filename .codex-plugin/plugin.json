@@ -17,9 +17,9 @@
   "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "respire",
-    "shortDescription": "吸即存，呼即取——给 Dim agent 装上本地加密记忆",
+    "shortDescription": "Store on inhale, recall on exhale — local encrypted memory for the Dim agent",
     "logo": "./assets/logo.png",
-    "longDescription": "respire（CLI 名 rsrs）为 Dim agent 提供本地优先、端侧加密的记忆层：每轮对话自动注入标题档召回，prompt 以「记：」开头即落库，AI 干完活触发存储检查；本地加密存储，注册 rsrs.rs 后云同步（LWW）。语义检索可选装 BGE-M3 增强，未装自动词面回退，开箱即用。",
+    "longDescription": "respire (CLI: rsrs) gives the Dim agent a local-first, end-side-encrypted memory layer: every round injects title-tier recall automatically, a prompt starting with \"Remember:\" stores instantly, and the Stop hook nudges storing new facts and lessons. Local encrypted store; register at rsrs.rs for cloud sync (LWW). Optional BGE-M3 boost for semantic recall — falls back to lexical matching without it, works out of the box.",
     "developerName": "risense-ai",
     "category": "Productivity",
     "capabilities": [
@@ -28,9 +28,9 @@
     ],
     "websiteURL": "https://github.com/risense-ai/respire-dimcode",
     "defaultPrompt": [
-      "之前我们是怎么处理这个问题的？",
-      "记：把刚才这个结论存进记忆。",
-      "翻忆一下上周定的约定。"
+      "How did we handle this before?",
+      "Remember: store this conclusion in memory.",
+      "Recall the agreement we made last week."
     ]
   }
 }
