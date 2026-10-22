@@ -8,10 +8,10 @@
 - CI：`.github/workflows/release.yml`——push tag（`*.*.*`）自动打包出 Release（`scripts/package.sh` 共用口径）；push main/PR 跑自检；`workflow_dispatch` 出 artifact 演练
 - 打包清单含 `assets/`
 
-## 未发布 — 同仓加 Qoder 版（`respire-qoder/`）
+## 未发布 — Qoder 版迁出至独立仓
 
-- Dim 根插件不动；新增 `respire-qoder/` 子目录为 Qoder 插件形态（`.qoder-plugin/plugin.json`＋marketplace 清单、`${QODER_PLUGIN_ROOT}`、Stop 用 `decision: deny`、`skip_prefixes` 内部提示白名单）
-- 独立仓：risense-ai/respire-qoder
+- 移除 `respire-qoder/` 子目录：Qoder 插件只在独立仓 <https://github.com/risense-ai/respire-qoder> 维护（当前 v0.6.2），本仓回归 Dim 根插件单一职责
+- Qoder 安装改用独立仓 release zip（或克隆后 `qoder plugins install <目录>`）；本仓 README 同步改指独立仓
 
 ## 0.5.0 — 干完活也要存（Stop 钩子）
 
