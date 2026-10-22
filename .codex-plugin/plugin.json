@@ -1,12 +1,25 @@
 {
   "name": "respire",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "respire memory for Dim: every-round title-tier recall, one-prefix store, degradation without models. Register on rsrs.rs for sync; the sidecar model is an optional boost.",
+  "author": "risense-ai",
+  "homepage": "https://github.com/risense-ai/respire-dimcode",
+  "repository": "https://github.com/risense-ai/respire-dimcode",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "respire",
+    "rsrs",
+    "dim",
+    "recall"
+  ],
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "respire",
     "shortDescription": "吸即存，呼即取——给 Dim agent 装上本地加密记忆",
+    "logo": "./assets/logo.png",
+    "longDescription": "respire（CLI 名 rsrs）为 Dim agent 提供本地优先、端侧加密的记忆层：每轮对话自动注入标题档召回，prompt 以「记：」开头即落库，AI 干完活触发存储检查；本地加密存储，注册 rsrs.rs 后云同步（LWW）。语义检索可选装 BGE-M3 增强，未装自动词面回退，开箱即用。",
     "developerName": "risense-ai",
     "category": "Productivity",
     "capabilities": [

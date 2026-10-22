@@ -19,7 +19,7 @@ rm -f "$OUT"
 
 zip -r "$OUT" \
   .codex-plugin .claude-plugin .gitignore CHANGELOG.md LICENSE README.md \
-  hooks scripts skills tests \
+  assets hooks scripts skills tests \
   -x 'hooks/__pycache__/*' 'hooks/__pycache__/' \
   -x 'hooks/hook.log' 'hooks/.nudge_counter' \
   -x '*.DS_Store' '*.pyc' >/dev/null
