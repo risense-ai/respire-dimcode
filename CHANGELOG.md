@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.4 — Stop 节流改问引擎（agent 侧落库也放行）
+
+- Stop「近 10 分钟已落库则不再催」原本只扫本层 hook.log 的 store 事件，而该事件只有钩子侧「记：」路径会写——agent 直接 `rsrs remember` 看不见，实测事件恒 0、分支从未命中，每轮都催（Qoder 侧 0.6.3 已修同一缺陷）
+- 新增 `engine_last_store()`：`rsrs list --limit 3 --json` 取 `updated_at`/`created_at` 最大值与 600s 比对，命中留痕 `stored_recent_skip src=engine`；6s 超时与异常一律放行照常催，日志快路径保留
+- 测试 45 → 48：引擎近期落库不催 / 陈旧仍催 / 留痕 src=engine；节流断言改走 stale/fresh 引擎桩，去掉真机库依赖
+- 随版发布：移除 `respire-qoder/` 子目录，Qoder 版只在独立仓 risense-ai/respire-qoder 维护，README/CHANGELOG 已改指
+
 ## 0.5.3 — 提示词英文化＋市场元数据与图标
 
 - SKILL.md、钩子注入简则、落库/待决/召回回执全部改为英文；保留「记：」等中文前缀兼容
@@ -7,11 +14,6 @@
 - `interface.logo` 指向新增 `assets/logo.png`（512x512，Dim 插件列表显示）；顶层补 `author`/`homepage`/`repository`/`license`/`keywords`，interface 补 `longDescription`（英文）
 - CI：`.github/workflows/release.yml`——push tag（`*.*.*`）自动打包出 Release（`scripts/package.sh` 共用口径）；push main/PR 跑自检；`workflow_dispatch` 出 artifact 演练
 - 打包清单含 `assets/`
-
-## 未发布 — Qoder 版迁出至独立仓
-
-- 移除 `respire-qoder/` 子目录：Qoder 插件只在独立仓 <https://github.com/risense-ai/respire-qoder> 维护（当前 v0.6.2），本仓回归 Dim 根插件单一职责
-- Qoder 安装改用独立仓 release zip（或克隆后 `qoder plugins install <目录>`）；本仓 README 同步改指独立仓
 
 ## 0.5.0 — 干完活也要存（Stop 钩子）
 

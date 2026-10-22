@@ -1,6 +1,6 @@
 {
   "name": "respire",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "respire memory for Dim: every-round title-tier recall, one-prefix store, degradation without models. Register on rsrs.rs for sync; the sidecar model is an optional boost.",
   "author": "risense-ai",
   "homepage": "https://github.com/risense-ai/respire-dimcode",
