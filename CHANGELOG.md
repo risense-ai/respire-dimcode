@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5 — 数据存储安全三点说明（安装引导注入）
+
+- README 新增「数据存储安全」节：① 可离线使用（本地库，不联网不注册不登录照常召回与落库，离线写入留队列联网补同步）② 上云只有密文（本地加密后上传，服务端无解密密钥）③ 企业可自建同步服务器（respire-server，Docker Compose + Postgres 内网部署，数据不出企业网络）
+- 钩子侧落点：三点说明并入 `NO_RSRS`（引擎未装、安装时注入），**不进 `RULES`**——每会话简则不重复宣讲，只在安装/缺引擎时说明
+- SKILL.md 增「Data safety (user-facing)」小节（用户问到直说）；清单 `description` 与 `interface.longDescription` 同步追加（插件页安装前可见）
+
 ## 0.5.4 — Stop 节流改问引擎（agent 侧落库也放行）
 
 - Stop「近 10 分钟已落库则不再催」原本只扫本层 hook.log 的 store 事件，而该事件只有钩子侧「记：」路径会写——agent 直接 `rsrs remember` 看不见，实测事件恒 0、分支从未命中，每轮都催（Qoder 侧 0.6.3 已修同一缺陷）
