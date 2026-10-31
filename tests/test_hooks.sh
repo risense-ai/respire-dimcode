@@ -89,8 +89,11 @@ check "探测失败注入冷启诊断段" "$(RESPITE_FAKE_PROBE_FAIL=1 run Sessi
 # 日志留痕：任一事件后 hook.log 应有本行
 run SessionStart >/dev/null
 run SessionStart >/dev/null
+# 凭据命中轮只记原因码、不落任何摘要（审计修复）——口令值不得入日志
 run UserPromptSubmit "我的密码是 password: hunter2 这算敏感吗" >/dev/null
 check "日志脱敏口令" "$(grep -q 'hunter2' "$TMP/hook.log" && echo LEAK || echo SAFE)" "含:SAFE"
+# 脱敏机制本身仍在：#nomem 轮仍落 detail，redact 应把口令式赋值打码
+run UserPromptSubmit "#nomem passwd: hunter2xk 复盘脱敏" >/dev/null
 check "日志脱敏留痕" "$(grep -q 'REDACTED' "$TMP/hook.log" && echo YES)" "含:YES"
 check "hook.log 留痕" "$(grep -q '"ev": "session"' "$TMP/hook.log" 2>/dev/null && echo YES)" "含:YES"
 
@@ -107,7 +110,7 @@ try:
 except SystemExit:
     pass
 PY
-)" "含:npm i -g @rsrsai/cli"
+)" "含:npm i -g rsrs-cli"
 
 CFG_OFFE="$TMP/config-disabled.json"
 echo '{"enabled": false}' > "$CFG_OFFE"
@@ -156,7 +159,7 @@ check "enabled=false 落库也静默" "$(run UserPromptSubmit "记：关断时�
 check "引擎缺失注入安装指令" "$(run_engineless)" "含:Install it now on the user's behalf"
 check "引导禁自造超级密码" "$(run_engineless)" "含:never pass --super"
 check "引导要求保存恢复码" "$(run_engineless)" "含:copy and keep it"
-check "引擎缺失含配置下一步" "$(run_engineless)" "含:register at https://rsrs.rs"
+check "引擎缺失含配置下一步" "$(run_engineless)" "含:rsrs register with the user on this machine"
 check "probe失败含未注册分支" "$(RESPITE_FAKE_PROBE_FAIL=1 run SessionStart)" "含:never registered"
 
 out=$(run UserPromptSubmit "rsrs 信封 JSON 结构解析取哪层")
@@ -173,6 +176,42 @@ print("OK" if m and int(m.group(1))==n else "BAD")')" "含:OK"
 check "无关 prompt 不注入" "$(run UserPromptSubmit "今晚吃什么菜好呢")" "空"
 check "单字 prompt 跳过" "$(run UserPromptSubmit "嗯")" "空"
 check "/nomem 关闭召回" "$(run UserPromptSubmit "/nomem rsrs 信封结构")" "空"
+# ---- 疑似凭据守卫：凭据值运行时拼接（源码无完整字面量，分发前静态扫描零误报）；引擎桩登记每次调用 ----
+SYN_SECRET="sk-""q7xkwm2vbnr8tzc41p9e"
+STUB_SPY="$TMP/rsrs-spy"
+cat > "$STUB_SPY" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$TMP/spy.log"
+case "\${1:-}" in
+  recall) printf '{"command":"recall","status":"ok","details":[{"id":"cccccccccccccccc","title":"spy","score":0.9}]}' ;;
+  remember) printf '{"command":"remember","status":"ok","summary":{"id":"dddddddddddddddd"}}' ;;
+  list) printf '{"command":"list","status":"ok","details":[]}' ;;
+  status) printf '{"command":"status","status":"ok","summary":{"session":{"has_token":true,"user":"spy"},"local_total":42}}' ;;
+esac
+exit 0
+EOF
+chmod +x "$STUB_SPY"
+# 桩路径转 Windows 形式（native python 不识 POSIX 临时目录；无 cygpath 的环境原样）
+SPY_PATH="$(cygpath -m "$STUB_SPY" 2>/dev/null || printf '%s' "$STUB_SPY")"
+CFG_SPY="$TMP/config-spy.json"
+echo '{"session_rules": true, "rsrs": "'"$SPY_PATH"'"}' > "$CFG_SPY"
+
+out=$(run UserPromptSubmit "api_key = $SYN_SECRET 存一下" "$CFG_SPY")
+check "疑似凭据不发引擎" "$out" "含:contains a credential"
+check "合成凭据不进注入输出" "$(printf '%s' "$out" | grep -qF -- "$SYN_SECRET" && echo LEAK || echo SAFE)" "含:SAFE"
+check "合成凭据不进日志" "$(grep -qF -- "$SYN_SECRET" "$TMP/hook.log" 2>/dev/null && echo LEAK || echo SAFE)" "含:SAFE"
+check "凭据命中只记原因码" "$(grep '"out": "secret_skip"' "$TMP/hook.log" | grep -q '"d"' && echo HASDETAIL || echo CODEONLY)" "含:CODEONLY"
+check "引擎桩未见凭据输入" "$( { [ -f "$TMP/spy.log" ] && grep -qF -- "$SYN_SECRET" "$TMP/spy.log"; } && echo GOT || echo CLEAN )" "含:CLEAN"
+check "引擎桩未见该轮调用" "$( [ -f "$TMP/spy.log" ] && grep -qE '^(recall|remember)( |$)' "$TMP/spy.log" && echo GOT || echo CLEAN )" "含:CLEAN"
+check "疑似凭据不落库" "$(run UserPromptSubmit "记：数据库密码 = hunter2u")" "含:contains a credential"
+# 普通输入不回归：真实引擎召回由上方「相关 prompt 触发召回」覆盖，此处证引擎桩链路本身可用
+out=$(run UserPromptSubmit "rsrs 信封 JSON 结构解析取哪层" "$CFG_SPY")
+if [ -f "$TMP/spy.log" ]; then
+  check "普通输入照常进引擎桩" "$(grep -q '^recall ' "$TMP/spy.log" && echo YES || echo NO)" "含:YES"
+  check "普通输入照常注入召回" "$out" "含:auto-recall"
+else
+  echo "SKIP  普通输入引擎桩（本机无法执行 bash 桩；真实引擎召回路径已由「相关 prompt 触发召回」覆盖）"
+fi
 check "技能指认轮剥前缀仍召回" "$(run UserPromptSubmit '$skill: 笔痕 rsrs 信封 JSON 结构解析取哪层')" "含:auto-recall"
 check "坏 stdin 静默" "$(printf 'not-json{{{' | RESPITE_CONFIG="$CFG_ON" "$PY3" "$ROOT/hooks/respire.py" UserPromptSubmit)" "空"
 check "未知事件静默" "$(run PreToolUse "rsrs 信封")" "空"

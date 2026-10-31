@@ -5,7 +5,7 @@ description: respire (rsrs) local encrypted memory playbook. Automatic per-turn 
 
 # respire · memory playbook
 
-Plugin behavior: SessionStart injects a short playbook; every UserPromptSubmit auto-recalls (rsrs skips irrelevant queries itself — zero hits = skip; this layer also applies a 0.34 threshold as a backstop); when a prompt starts with "记：", "存：", or "remember:", the plugin stores it first as a fallback and returns a receipt — **when the receipt includes a provisional title and short id, extract a complete "subject + action + result" sentence from the facts and replace it with `rsrs retitle <short-id> --title` (hard rule; the title is the facade for recall and dedup)**; `/nomem` disables recall for the turn.
+Plugin behavior: SessionStart injects a short playbook; every UserPromptSubmit auto-recalls (rsrs skips irrelevant queries itself — zero hits = skip; this layer defaults to direct output, threshold off); when a prompt starts with "记：", "存：", or "remember:", the plugin stores it first as a fallback and returns a receipt — **when the receipt includes a provisional title and short id, extract a complete "subject + action + result" sentence from the facts and replace it with `rsrs retitle <short-id> --title` (hard rule; the title is the facade for recall and dedup)**; `/nomem` disables recall for the turn.
 
 ## Commands
 
@@ -20,7 +20,7 @@ Plugin behavior: SessionStart injects a short playbook; every UserPromptSubmit a
 ## Parsing notes (CLI envelope)
 
 - Every command with `--json` uses one envelope: `status`, `summary`, `items`, `details`, `errors`; **failures also return HTTP 200 with `status:"fail"` and `errors[]`** — check status, not the exit code
-- recall scores and entries live in `details[].score` and `details[].entry` (full id; use the first 8 chars as the short id); `items` is only the "score title" line
+- recall scores and entries live in `details[].score`, `details[].id` (full id; use the first 8 chars as the short id), `details[].title` and `details[].superseded_by`; `items` is only the "score title" line
 - Progress goes to stderr; never mix it into JSON with `2>&1`
 - remember stores after judgement: `status:"ok"` means written (`summary.id`); `status:"pending"` plus `written:false` means a similar record was found and **nothing was written** — attach with `--parent <id>` or force with `--force`
 - The default `trivial` tier goes to the diary area, is excluded from recall and gets its title rewritten to "activity track <date>" — use `--importance important` for factual records
@@ -35,4 +35,4 @@ Plugin behavior: SessionStart injects a short playbook; every UserPromptSubmit a
 
 - Never put passwords, ID numbers, phone numbers, card numbers, or private keys into memory bodies or query terms; record only where they are stored — the library is encrypted, but a leaked key exposes everything
 - Recall scores are relevance, not confidence; run candidates before storing, prefer edit > merge > store
-- Account and sync configuration are outside this plugin: register at rsrs.rs, run `rsrs register` / `rsrs login` locally; the plugin does not handle it
+- Account and sync configuration are outside this plugin: run `rsrs register` / `rsrs login` on this machine (no website step); the plugin does not handle it
