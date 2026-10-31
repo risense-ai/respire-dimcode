@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.6 — 疑似凭据拦截＋安装/注册口径统一
+
+- 新增输入侧疑似凭据扫描（`contains_secret`）：prompt 命中私钥块 / sk-、ghp_、github_pat_、xox、Bearer 等高危 token / `密码|口令|私钥|passwd|api key|token|secret` 赋值形态时，该条不召回也不落库，注入 `SECRET_SKIP` 提示——补齐与 codex/pi/dsh 侧一致的防线（此前简则只写"禁存口令"而无机器门）
+- 安装与注册口径对齐 CLI 现状：`npm i -g rsrs-cli@latest`（官方新用户入口，`@rsrsai/cli` 继续可用）；注册为本机 `rsrs register` 直注、无网站步骤（NO_RSRS / LOGIN_NUDGE / PROBE_FAIL 三处，原"先去 rsrs.rs 注册"为过时表述）
+- 测试 48 → 50：疑似凭据不召回 / 不落库两条；安装与注册断言同步新口径
+
 ## 0.5.5 — 数据存储安全三点说明（安装引导注入）
 
 - README 新增「数据存储安全」节：① 可离线使用（本地库，不联网不注册不登录照常召回与落库，离线写入留队列联网补同步）② 上云只有密文（本地加密后上传，服务端无解密密钥）③ 企业可自建同步服务器（respire-server，Docker Compose + Postgres 内网部署，数据不出企业网络）

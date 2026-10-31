@@ -107,7 +107,7 @@ try:
 except SystemExit:
     pass
 PY
-)" "含:npm i -g @rsrsai/cli"
+)" "含:npm i -g rsrs-cli"
 
 CFG_OFFE="$TMP/config-disabled.json"
 echo '{"enabled": false}' > "$CFG_OFFE"
@@ -156,7 +156,7 @@ check "enabled=false 落库也静默" "$(run UserPromptSubmit "记：关断时�
 check "引擎缺失注入安装指令" "$(run_engineless)" "含:Install it now on the user's behalf"
 check "引导禁自造超级密码" "$(run_engineless)" "含:never pass --super"
 check "引导要求保存恢复码" "$(run_engineless)" "含:copy and keep it"
-check "引擎缺失含配置下一步" "$(run_engineless)" "含:register at https://rsrs.rs"
+check "引擎缺失含配置下一步" "$(run_engineless)" "含:rsrs register with the user on this machine"
 check "probe失败含未注册分支" "$(RESPITE_FAKE_PROBE_FAIL=1 run SessionStart)" "含:never registered"
 
 out=$(run UserPromptSubmit "rsrs 信封 JSON 结构解析取哪层")
@@ -173,6 +173,8 @@ print("OK" if m and int(m.group(1))==n else "BAD")')" "含:OK"
 check "无关 prompt 不注入" "$(run UserPromptSubmit "今晚吃什么菜好呢")" "空"
 check "单字 prompt 跳过" "$(run UserPromptSubmit "嗯")" "空"
 check "/nomem 关闭召回" "$(run UserPromptSubmit "/nomem rsrs 信封结构")" "空"
+check "疑似凭据不发引擎" "$(run UserPromptSubmit "api_key = sk-abcdefghijklmnopqrst 存一下")" "含:contains a credential"
+check "疑似凭据不落库" "$(run UserPromptSubmit "记：数据库密码 = hunter2u")" "含:contains a credential"
 check "技能指认轮剥前缀仍召回" "$(run UserPromptSubmit '$skill: 笔痕 rsrs 信封 JSON 结构解析取哪层')" "含:auto-recall"
 check "坏 stdin 静默" "$(printf 'not-json{{{' | RESPITE_CONFIG="$CFG_ON" "$PY3" "$ROOT/hooks/respire.py" UserPromptSubmit)" "空"
 check "未知事件静默" "$(run PreToolUse "rsrs 信封")" "空"
