@@ -1,7 +1,7 @@
 {
   "name": "respire",
-  "version": "0.5.5",
-  "description": "respire memory for Dim: every-round title-tier recall, one-prefix store, degradation without models. Works fully offline; only encrypted records reach the cloud; enterprises can self-host the sync server. Register on rsrs.rs for sync; the sidecar model is an optional boost.",
+  "version": "0.5.6",
+  "description": "respire memory for Dim: every-round title-tier recall, one-prefix store, degradation without models. Works fully offline; only encrypted records reach the cloud; enterprises can self-host the sync server. On-machine registration via rsrs register; the sidecar model is an optional boost.",
   "author": "risense-ai",
   "homepage": "https://github.com/risense-ai/respire-dimcode",
   "repository": "https://github.com/risense-ai/respire-dimcode",
@@ -19,7 +19,7 @@
     "displayName": "respire",
     "shortDescription": "Store on inhale, recall on exhale — local encrypted memory for the Dim agent",
     "logo": "./assets/logo.png",
-    "longDescription": "respire (CLI: rsrs) gives the Dim agent a local-first, end-side-encrypted memory layer: every round injects title-tier recall automatically, a prompt starting with \"Remember:\" stores instantly, and the Stop hook nudges storing new facts and lessons. Local encrypted store; register at rsrs.rs for cloud sync (LWW). Works fully offline — no network or account needed to read and write; only encrypted records are uploaded, the server has no decryption key; enterprises can self-host the sync server (respire-server, Docker Compose + Postgres on the intranet). Optional BGE-M3 boost for semantic recall — falls back to lexical matching without it, works out of the box.",
+    "longDescription": "respire (CLI: rsrs) gives the Dim agent a local-first, end-side-encrypted memory layer: every round injects title-tier recall automatically, a prompt starting with \"Remember:\" stores instantly, and the Stop hook nudges storing new facts and lessons. Local encrypted store; register on this machine with rsrs register for cloud sync (LWW). Works fully offline — no network or account needed to read and write; only encrypted records are uploaded, the server has no decryption key; enterprises can self-host the sync server (respire-server, Docker Compose + Postgres on the intranet). Optional BGE-M3 boost for semantic recall — falls back to lexical matching without it, works out of the box.",
     "developerName": "risense-ai",
     "category": "Productivity",
     "capabilities": [

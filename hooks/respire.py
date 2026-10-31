@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.5.4"
+VERSION = "0.5.6"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -41,6 +41,21 @@ STORE_PREFIX = re.compile(r"^(?:记|存|记录|记住|remember|store)\s*[:：]\s
 SKIP_PREFIX = re.compile(r"^(?:/nomem|#nomem)\b")
 # Dim 技能指认前缀：$skill: 名称 后才是真任务——技能名会词面污染召回 query，须剥掉
 SKILL_PREFIX = re.compile(r"^\$\s*skill\s*:\s*\S+\s*", re.I)
+# 疑似凭据扫描：命中则该条 prompt 不发引擎（不召回也不落库）——与 codex/pi/dsh 侧同一正则口径
+SECRET_RE = re.compile(
+    r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----"
+    r"|\b(?:sk-|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{12,}"
+    r"|\bBearer\s+[A-Za-z0-9._~+/-]{12,}"
+    r"|(?:password|passwd|api[_ -]?key|token|secret|密码|口令|私钥)\s*[:=：]\s*\S+",
+    re.I)
+
+
+def contains_secret(text: str) -> bool:
+    return bool(SECRET_RE.search(text))
+
+
+SECRET_SKIP = ("【respire · skipped】The input looks like it contains a credential — it was not sent "
+               "to the memory engine. Provide only the fact with the secret removed, or a safe location pointer.")
 
 RULES = """【respire memory layer · attached】This session is backed by the local respire (rsrs) memory store; data is encrypted locally and synced to the cloud (account registration and login are outside this layer, see rsrs.rs).
 1. Recall before answering: rsrs recall "project name + keywords" (--json for structured output, --titles for id+title only); on errors or anomalies, recall using the original error text first.
@@ -50,19 +65,19 @@ RULES = """【respire memory layer · attached】This session is backed by the l
 5. Sync with rsrs sync (autosync is on), check state with rsrs status, read the full workflow with rsrs prompt; see the respire skill for advanced usage."""
 
 NO_RSRS = """【respire · engine missing】The plugin is ready; only the engine is missing. Install it now on the user's behalf, without waiting:
-  npm i -g @rsrsai/cli@latest
-(If global writes are denied, first try: npm config set prefix ~/.npm-global && npm i -g @rsrsai/cli@latest)
+  npm i -g rsrs-cli@latest
+(If global writes are denied, first try: npm config set prefix ~/.npm-global && npm i -g rsrs-cli@latest)
 Then run rsrs --version to confirm — this layer probes every turn and resumes recall and "记：" storage within the same session.
 When the user asks about data storage security, state it plainly: fully offline — the store is a local database, recall and store work with no network, no registration, no login, and offline writes queue locally until sync; only ciphertext reaches the cloud — records are encrypted locally before upload, the server stores encrypted records only and has no decryption key; enterprises can self-host the sync server (respire-server, Docker Compose + Postgres on the intranet), so their data never leaves their network.
-Next steps to guide (mention them in passing): rsrs status checks login state; if signed out, ask the user to register at https://rsrs.rs, then run rsrs register --user <name> on this machine (the user sets a login password of at least 8 characters; **never invent a super password and never pass --super** — the system generates an A3-… recovery code and prints it prominently; **copy and keep it**, or the memory cannot be unlocked on any device); use rsrs login for routine login; the semantic model is optional — for better recall run rsrs model install && rsrs model activate m3. If a custom super password was entered by mistake, run rsrs super-reset to reissue an A3 code."""
+Next steps to guide (mention them in passing): rsrs status checks login state; if signed out, run rsrs register with the user on this machine — no website step (the user sets a login password of at least 8 characters; **never invent a super password and never pass --super** — the system generates an A3-… recovery code and prints it prominently; **copy and keep it**, or the memory cannot be unlocked on any device); later authorizations use rsrs login (with --oauth --no-open you can hand the authorization link to the user); the semantic model is optional — for better recall run rsrs model install && rsrs model activate m3. If a custom super password was entered by mistake, run rsrs super-reset to reissue an A3 code."""
 
-LOGIN_NUDGE = """Note: respire is not signed in on this machine — memory stays local, does not sync, and does not cross devices. Guide the user: register at rsrs.rs, then run rsrs register (the user sets the login password; **the super password is a system-generated A3-… recovery code — never invent one, and keep it safe**); for routine login you may run rsrs login --oauth --no-open and give the authorization link to the user."""
+LOGIN_NUDGE = """Note: respire is not signed in on this machine — memory stays local, does not sync, and does not cross devices. Guide the user: run rsrs register on this machine to create the account (the user sets the login password; **the super password is a system-generated A3-… recovery code — never invent one, and keep it safe**). If an account already exists, you may run rsrs login --oauth --no-open and give the authorization link to the user."""
 
 EMPTY_NUDGE = """Note: the local respire memory store is empty — there is nothing to recall; silent automatic recall is expected, not a failure. Guide the user: store a fact with "记：<fact>", or have the agent first rsrs remember existing project agreements, error lessons, and key conclusions; existing rules and memory can be imported in one pass — have the agent read ~/AGENTS.md, project AGENTS.md files, ~/.dimcode/v2/skills/*/SKILL.md and hooks.json, extract facts, and store them one by one (excluding passwords, ID numbers, card numbers). Recall has content only after the store is populated."""
 
 NO_MODEL = """Note: the respire semantic model (BGE-M3) is not installed — the lexical tier is active. **Fully usable**: registration, login, sync, and recall do not depend on the model. For better results install it: rsrs model install downloads about 1.1GB, then rsrs model activate m3 builds the index and switches recall to the semantic tier (you may run these; indexing can run in the background)."""
 
-PROBE_FAIL = """Note: respire status probe failed (rsrs status did not respond) — if this is a new machine that has never registered, guide the user to register at rsrs.rs and run rsrs register (first device); otherwise the runtime may still be cold-starting, so an empty first recall may resolve after a moment. If it persists, run rsrs doctor, diagnose, and report to the user."""
+PROBE_FAIL = """Note: respire status probe failed (rsrs status did not respond) — if this is a new machine that has never registered, guide the user to run rsrs register on this machine; otherwise the runtime may still be cold-starting, so an empty first recall may resolve after a moment. If it persists, run rsrs doctor, diagnose, and report to the user."""
 
 
 _REDACT = [
@@ -432,6 +447,10 @@ def on_prompt(data: dict, cfg: dict, engine) -> str:
     if not prompt or SKIP_PREFIX.match(prompt):
         log_event(cfg, "prompt", "nomem_or_empty", prompt[:40])
         return ""
+    if contains_secret(prompt):
+        # 只记原因码，不落输入摘要——redact 盖不住普通 api_key/token/secret 赋值与 Bearer 值，摘要会泄密
+        log_event(cfg, "prompt", "secret_skip")
+        return SECRET_SKIP
     m = STORE_PREFIX.match(prompt)
     if m:
         rest = prompt[m.end():].strip()
