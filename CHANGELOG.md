@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.8 — 2026-11-01 · 维护者复核整改（PR #6 review）
+
+### Fixed
+
+- **一次收尾锁重构（复核#1）**：`.store_turn` 单会话状态改为**每会话独立锁文件**（`O_CREAT|O_EXCL` 原子独占——并发 Stop 只有一个能落锁；锁无 TTL，25 小时后仍占用，只有新真实 prompt 删除重新武装；A→B→A 交错不丢锁）；无法落锁（状态目录不可写等）一律放行——绝不无锁 block。prompt_ts/store_ts 存于尽力维护的 per-session map（temp+rename 原子替换，仅按数量收敛），map 失败只损失免催优化。
+- **坏结构 list 不再当成功（复核#2）**：`details` 非数组、或非空却无可解析时间戳 → 按查询失败处理（不归属新条目给本次写入）。
+- **共享 hook 预算（复核#3）**：remember/回读/只读核实共用截止时间（`RESPITE_HOOK_BUDGET_S`，默认 20s，预留 2.5s 输出余量）；慢坏回执后剩余不足直接 unknown，不再追加 list。
+- **回执/回读加固（复核#4）**：`ok`/`warn` 缺有效 id（hex/uuid 白名单校验）、畸形 summary（类型防护不抛异常）、未知 status 一律归 **unknown**（禁重发）；回读改为**全量核验**：返回 id 必须=写入 id、标题相等、完整正文相等，才称 verified；否则 mismatch/unavailable 如实标注。
+- **免催凭证可归属化（复核#1 验收补全）**：移除「引擎全库最新写入晚于 prompt 即免催」（无法归属会话，B 写入会误免催 A）；`Stop` 完全不查询引擎——也因此不存在查库失败强迫续跑的路径；`/nomem` 仍算新请求（mark 提前），只跳召回不跳收尾重武装。
+
+### Changed
+
+- 测试：CI 29/29（+复核要求反例：A→B→A 交错不丢锁、锁无新 prompt 不释放、缺 id/垃圾 id/坏 summary→unknown、skip 回执非失败、错 id/尾部篡改回读→mismatch、慢坏回执+紧预算→零追加调用、坏 schema list 不归属）；bash 75/0（Stop 场景同步新契约：引擎写入不再免催＋单次 nudge 计数、坏信封/死进程仍催、状态目录不可写放行、25 小时锁仍占用、新请求与 /nomem 重武装；`RESPITE_TURN_STATE` 落锁目录改 Windows 原生可见路径）；`.gitignore` 增 `.latch_*`/`turn_map.json` 运行期产物。
+
 ## 0.5.7 — 审计整改：写结果状态机＋Stop fail-open＋请求级免催凭证（DM-01~DM-04）
 
 ### Fixed

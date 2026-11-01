@@ -18,6 +18,9 @@ if [ -z "$RSRS" ] || [ ! -x "$RSRS" ]; then
 fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# 落锁目录必须给 Windows 原生可见路径（cygpath -m 混合式）：MSYS 的 /tmp 是映射，
+# 原生 python 拿 POSIX 路径会把落锁目录创建到当前盘符根下（如 D:\tmp）
+TURNBASE="$(cygpath -m "$TMP" 2>/dev/null || printf '%s' "$TMP")/turnstate"
 CFG_ON="$TMP/config-on.json"
 echo '{"session_rules": true}' > "$CFG_ON"
 CFG_OFF="$TMP/config-off.json"
@@ -27,7 +30,7 @@ echo '{"session_rules": false}' > "$CFG_OFF"
 # prompt 走环境变量 PROMPT_VAL——MSYS 会把「/nomem …」这类 argv 转成 Windows 路径，env 值不转
 run() {
   local ev="$1" pr="${2-}" cfg="${3:-$CFG_ON}" sess="${4:-selftest}"
-  PROMPT_VAL="$pr" "$PY3" - "$ev" "$sess" <<'PY' | PROMPT_VAL="$pr" RESPITE_CONFIG="$cfg" RESPITE_LOG="$TMP/hook.log" RESPITE_NUDGE_STATE="$TMP/nudge" RESPITE_TURN_STATE="$TMP/turn.json" "$PY3" "$ROOT/hooks/respire.py" "$ev"
+  PROMPT_VAL="$pr" "$PY3" - "$ev" "$sess" <<'PY' | PROMPT_VAL="$pr" RESPITE_CONFIG="$cfg" RESPITE_LOG="$TMP/hook.log" RESPITE_NUDGE_STATE="$TMP/nudge" RESPITE_TURN_STATE="$TURNBASE" "$PY3" "$ROOT/hooks/respire.py" "$ev"
 import json, os, sys
 ev, sess = sys.argv[1], sys.argv[2]
 pr = os.environ.get("PROMPT_VAL", "")
@@ -131,10 +134,10 @@ run_stub() {
   local ev="$1" payload="$2" sm="${3:-ok}" sl="${4:-}" sess="${5:-selftest}"
   printf '%s' "$payload" | STUB_MODE="$sm" STUB_LIST="$sl" RESPITE_TEST_FAST=1 \
     RESPITE_CONFIG="$CFG_STUB" RESPITE_LOG="$TMP/hook.log" RESPITE_NUDGE_STATE="$TMP/nudge" \
-    RESPITE_TURN_STATE="$TMP/turn.json" "$PY3" "$ROOT/hooks/respire.py" "$ev"
+    RESPITE_TURN_STATE="$TURNBASE" "$PY3" "$ROOT/hooks/respire.py" "$ev"
 }
 STOP_JSON='{"hook_event_name": "Stop", "stop_hook_active": false, "session_id": "selftest"}'
-reset_state() { rm -f "$TMP/turn.json" "$TMP/nudge"; }
+reset_state() { rm -rf "$TMP/turnstate" "$TMP/nudge"; }
 
 # ---- 写回执状态机（§7.1/§7.2 契约；全走桩，零真库依赖） ----
 FACT="fixed stub fact sentence one."
@@ -170,7 +173,7 @@ check "回读不一致如实标注" "$out" "含:DIFFERENT title/content"
 
 # ---- Stop 存储检查（新契约：fail-open + 请求级凭证 + 一次收尾锁；每场景独立 reset 状态） ----
 STOP_JSON='{"hook_event_name": "Stop", "stop_hook_active": false, "session_id": "selftest"}'
-reset_state() { rm -f "$TMP/turn.json" "$TMP/nudge"; }
+reset_state() { rm -rf "$TMP/turnstate" "$TMP/nudge"; }
 stop_case() {  # stop_case <STUB_LIST>：reset 后单次 Stop，输出入 OUT_STOP
   reset_state
   OUT_STOP="$(run_stub Stop "$STOP_JSON" ok "${1:-stale}")"
@@ -190,16 +193,40 @@ reset_state
 run_stub UserPromptSubmit '{"hook_event_name": "UserPromptSubmit", "prompt": "next real question", "session_id": "selftest"}' ok >/dev/null
 check "新请求重新武装仍催" "$(run_stub Stop "$STOP_JSON" ok stale)" '含:"decision": "block"'
 stop_case list_fail
-check "查库坏信封fail-open放行(旧代码会催)" "$OUT_STOP" "空"
+check "查库坏信封不再影响Stop(不查引擎)" "$OUT_STOP" '含:"decision": "block"'
 stop_case list_dead
-check "查库死进程fail-open放行" "$OUT_STOP" "空"
+check "查库死进程不再影响Stop(不查引擎)" "$OUT_STOP" '含:"decision": "block"'
 stop_case fresh
 check "无请求凭证时引擎新写入仍催(不跨轮误抑制)" "$OUT_STOP" '含:"decision": "block"'
 reset_state
 run_stub UserPromptSubmit '{"hook_event_name": "UserPromptSubmit", "prompt": "turn with engine store", "session_id": "selftest"}' ok >/dev/null
-check "引擎写入晚于本轮prompt免催" "$(run_stub Stop "$STOP_JSON" ok fresh)" "空"
-check "引擎放行留痕 src=engine" "$(grep -q 'stored_recent_skip.*src=engine' "$TMP/hook.log" && echo YES)" "含:YES"
-check "fail-open 留痕" "$(grep -q 'engine_query_fail_open' "$TMP/hook.log" && echo YES)" "含:YES"
+# 复核整改：Stop 不再查询引擎——引擎侧写入（无法归属会话）不再免催，也没有查库失败续跑路径
+check "引擎写入晚于prompt不再免催(去无归属抑制)" "$(run_stub Stop "$STOP_JSON" ok fresh)" '含:"decision": "block"'
+NUDGE_N0="$(grep -c '"ev": "stop", "out": "nudge"' "$TMP/hook.log" 2>/dev/null)"; NUDGE_N0="${NUDGE_N0:-0}"
+run_stub UserPromptSubmit '{"hook_event_name": "UserPromptSubmit", "prompt": "arm single nudge count", "session_id": "selftest"}' ok >/dev/null
+run_stub Stop "$STOP_JSON" ok fresh >/dev/null
+NUDGE_N1="$(grep -c '"ev": "stop", "out": "nudge"' "$TMP/hook.log" 2>/dev/null)"; NUDGE_N1="${NUDGE_N1:-0}"
+check "Stop 不再发起引擎查询(单次nudge)" "$( [ $((NUDGE_N1 - NUDGE_N0)) = 1 ] && echo ONE || echo MANY )" "含:ONE"
+check "fail-open 留痕(旧查库路径已移除)" "$(grep -q 'once_latch_skip' "$TMP/hook.log" && echo YES)" "含:YES"
+# 状态目录被同名文件挡住 → 无法落锁 → 放行（绝不无锁 block）
+# 挡路路径要对 $TMP 先 cygpath -m 再拼 /not-a-dir/sub——直接 cygpath 含文件组件的整路径会报错
+rm -rf "$TMP/not-a-dir"; BLOCKER="$TMP/not-a-dir"; printf 'x' > "$BLOCKER"
+reset_state
+check "状态目录不可写时放行(绝不无锁block)" "$(printf '%s' '{"hook_event_name": "Stop", "stop_hook_active": false, "session_id": "selftest"}' | RESPITE_CONFIG="$CFG_STUB" RESPITE_LOG="$TMP/hook.log" RESPITE_NUDGE_STATE="$TMP/nudge" RESPITE_TURN_STATE="$(cygpath -m "$TMP" 2>/dev/null || printf '%s' "$TMP")/not-a-dir/sub" "$PY3" "$ROOT/hooks/respire.py" Stop)" "空"
+rm -f "$BLOCKER"
+# 锁不设 TTL：25 小时前的锁仍占用，只有新 prompt 重新武装
+reset_state
+run_stub Stop "$STOP_JSON" ok stale >/dev/null
+OLDLATCH="$(ls "$TMP"/turnstate/.latch_* 2>/dev/null | head -1)"
+if [ -n "$OLDLATCH" ]; then printf '{"ts": 100}' > "$OLDLATCH"; fi
+check "25小时前的锁仍占用(无TTL)" "$( [ -n "$OLDLATCH" ] && out="$(run_stub Stop "$STOP_JSON" ok stale)" && [ -z "$out" ] && echo HELD || echo LOST )" "含:HELD"
+run_stub UserPromptSubmit '{"hook_event_name": "UserPromptSubmit", "prompt": "re-arm after aged latch", "session_id": "selftest"}' ok >/dev/null
+check "新请求重新武装后仍可催" "$(run_stub Stop "$STOP_JSON" ok stale)" '含:"decision": "block"'
+# /nomem 只跳召回，仍是新请求（重新武装收尾锁）
+reset_state
+run_stub Stop "$STOP_JSON" ok stale >/dev/null
+run_stub UserPromptSubmit '{"hook_event_name": "UserPromptSubmit", "prompt": "/nomem skip recall only", "session_id": "selftest"}' ok >/dev/null
+check "/nomem 轮重新武装收尾锁" "$(run_stub Stop "$STOP_JSON" ok stale)" '含:"decision": "block"'
 check "一次收尾锁留痕" "$(grep -q 'once_latch_skip' "$TMP/hook.log" && echo YES)" "含:YES"
 reset_state
 STUB_TITLE="$FACT" STUB_CONTENT="$FACT" run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"记：$FACT\", \"session_id\": \"sessA\"}" rem_ok >/dev/null
@@ -211,7 +238,9 @@ run_stub UserPromptSubmit '{"hook_event_name": "UserPromptSubmit", "prompt": "ne
 check "下一轮不被上一轮成功写误抑制(应催)" "$(run_stub Stop "$STOP_JSON" ok stale)" '含:"decision": "block"'
 CFG_NUDGE0="$TMP/config-nudge0.json"
 echo '{"store_nudge_every": 0}' > "$CFG_NUDGE0"
-check "Stop 节流关闭静默" "$(printf '%s' '{"hook_event_name": "Stop", "stop_hook_active": false, "session_id": "selftest"}' | RESPITE_CONFIG="$CFG_NUDGE0" RESPITE_LOG="$TMP/hook.log" RESPITE_NUDGE_STATE="$TMP/nudge" RESPITE_TURN_STATE="$TMP/turn.json" "$PY3" "$ROOT/hooks/respire.py" Stop)" "空"
+check "Stop 节流关闭静默" "$(printf '%s' '{"hook_event_name": "Stop", "stop_hook_active": false, "session_id": "selftest"}' | RESPITE_CONFIG="$CFG_NUDGE0" RESPITE_LOG="$TMP/hook.log" RESPITE_NUDGE_STATE="$TMP/nudge" RESPITE_TURN_STATE="$TURNBASE" "$PY3" "$ROOT/hooks/respire.py" Stop)" "空"
+CFG_OFFE="$TMP/config-disabled.json"
+echo '{"enabled": false}' > "$CFG_OFFE"
 check "enabled=false 全线静默" "$(run SessionStart "" "$CFG_OFFE")" "空"
 check "enabled=false 落库也静默" "$(run UserPromptSubmit "记：关断时不应落库" "$CFG_OFFE")" "空"
 # 引擎缺失分支：单元注入 monkeypatch find_rsrs→None（真机造不出「全路径皆缺」）
