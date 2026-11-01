@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.7 — 审计整改：写结果状态机＋Stop fail-open＋请求级免催凭证（DM-01~DM-04）
+
+### Fixed
+
+- **DM-02 写结果状态机**：「记：」回执不再只认 `status=ok`——`warn`+有效 id 是**已写入带警告**，如实回执附错误摘要，不误报「未接受」、不引导重发（旧实现把已提交数据当失败，诱发重复写）；超时/坏回执归为 **unknown**，回执明令「`rsrs list`/`rsrs show` 只读核实、禁止重发」，秒回坏回执自动 `list` 核对并报告可能已写。
+- **DM-01 Stop fail-open**：查库 `list` 失败/超时/坏信封/死进程时直接放行，不再 block——记忆层故障不得拦主任务结束。
+- **DM-03 请求级免催凭证**：废除「近 10 分钟任意写入」全局抑制（跨轮误抑制）；改为 `.store_turn`——同会话、本轮 prompt 之后的成功写回执或引擎侧写入才免催。pending 回执保留候选短 id 与引擎建议动作全量（改＞并＞挂＞存，§7.2）；ok/warn 后 `show` 写后回读核验（R11）。
+- **DM-04 一次收尾锁**：宿主未带 `stop_hook_active` 时同一请求也至多 block 一次；新 prompt 重新武装。
+
+### Changed
+
+- 测试：CI 桩白名单升级为有序调用序列（remember→show 回读链），spy 支持 warn/pending/silent/hang/show_mismatch；新增 8 个契约测试并翻转旧错误期望（failed→block 曾被当正确结果）。bash 套件换可移植 python 引擎桩（.cmd 包装），修 Windows 伪故障，基线 54/7 → 71/0（--store 74/0）。`RESPITE_TEST_FAST`/`RESPITE_TURN_STATE` 测试后门；README 行为表同步；`.gitignore` 增 `.store_turn`。
+
+## 0.5.6 — 疑似凭据拦截＋安装/注册口径统一
 ## 0.5.6 — 疑似凭据拦截＋安装/注册口径统一
 
 - 新增输入侧疑似凭据扫描（`contains_secret`）：prompt 命中私钥块 / sk-、ghp_、github_pat_、xox、Bearer 等高危 token / `密码|口令|私钥|passwd|api key|token|secret` 赋值形态时，该条不召回也不落库，注入 `SECRET_SKIP` 提示——补齐与 codex/pi/dsh 侧一致的防线（此前简则只写"禁存口令"而无机器门）
