@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.10 — 2026-11-01 · 第三轮复核整改（同会话请求隔离＋严格信封）
+
+### Fixed
+
+- **请求代凭证绑定（复核#1）**：`mark_prompt` 返回 gen；`do_store` 入口捕获；`mark_store(session, gen)` 记 `store_req_ts`；`turn_stored` 要求 `store_req_ts == prompt_ts`——同会话旧请求延迟完成不免催新请求（双向屏障测试）。
+- **同会话 RMW 事务锁（复核#1）**：`_map_lock` O_EXCL lockfile（mtime>5s 陈旧兜底、等待超窗放弃）内串行化读改写——旧快照写回不可能回滚新 prompt（持锁互斥测试）。
+- **严格 ID 类型与白名单（复核#2）**：`summary.id` 必须原生字符串（JSON 数字 12345678 不再 str() 强转）；白名单收紧为 UUID 或 16+ 位 hex（`a-------` 拒绝）→ unknown。
+- **回读三方 id + 原生类型（复核#2）**：verified 需 summary.id、entry.id 均为字符串且===目标 id；title/content 必须原生字符串（数字 42 不与 "42" 匹配）——错 entry.id、缺失、非字符串正文一律 mismatch，Saved 保留。
+
+### Changed
+
+- 测试：CI 37/37（+2 测试块：请求代/RMW 锁、严格信封数字 id/横线串/错 entry.id/数字正文）。
+
+## 0.5.9 — 2026-11-01
 ## 0.5.9 — 2026-11-01 · 复核二轮整改（PR #6 review round 2）
 
 ### Fixed

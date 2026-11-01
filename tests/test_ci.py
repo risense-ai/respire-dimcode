@@ -111,6 +111,8 @@ elif sub == 'remember':
                                      'rsrs remember "<content>" --parent <candidate id>',
                                      'rsrs remember "<content>" --force to write as new entry']}))
         sys.exit(2)
+    if mode == 'ok_numid': print(json.dumps({'status':'ok','summary':{'id':12345678}})); sys.exit(0)
+    if mode == 'ok_dashid': print(json.dumps({'status':'ok','summary':{'id':'a-------'}})); sys.exit(0)
     if mode == 'silent': sys.exit(0)
     if mode == 'ok_noid': print(json.dumps({'status':'ok','summary':{'action':'created'}})); sys.exit(0)
     if mode == 'ok_junkid': print(json.dumps({'status':'ok','summary':{'id':'zz!!not-hex'}})); sys.exit(0)
@@ -140,6 +142,14 @@ elif sub == 'show':
         pass
     if mode == 'show_mismatch':
         title = title + ' (drifted)'
+    if mode == 'show_numcontent':
+        print(json.dumps({'status':'ok','summary':{'id':sys.argv[2],'title':title},
+                          'details':{'entry':{'id':sys.argv[2],'title':title,'content':42}}}))
+        sys.exit(0)
+    if mode == 'show_noentryid':
+        print(json.dumps({'status':'ok','summary':{'id':sys.argv[2],'title':title},
+                          'details':{'entry':{'title':title,'content':content}}}))
+        sys.exit(0)
     if mode == 'show_wrongid':
         print(json.dumps({'status':'ok','summary':{'id':'99999999-9999-4999-8999-999999999999','title':title},
                           'details':{'entry':{'id':'99999999-9999-4999-8999-999999999999','title':title,'content':content}}}))
@@ -197,11 +207,11 @@ else: sys.exit(1)
         elif prompt.startswith(('记：','store:')):
             content = prompt.replace('：',':',1).split(':',1)[1].strip()
             argv = ['remember',content,'--title',content,'--importance','important','--json']
-            if mode in ('ok','show_fail','show_mismatch','show_wrongid','show_tail','show_badarr','show_badstr'):
+            if mode in ('ok','show_fail','show_mismatch','show_wrongid','show_tail','show_badarr','show_badstr','show_numcontent','show_noentryid'):
                 args_seq = [argv, ['show','dddddddddddddddd','--json']]
             elif mode == 'warn':
                 args_seq = [argv, ['show','eeeeeeeeeeeeeeee','--json']]
-            elif mode in ('silent','ok_noid','ok_junkid','bad_summary'):  # 未知回执 → 只读核实 list
+            elif mode in ('silent','ok_noid','ok_junkid','bad_summary','ok_numid','ok_dashid'):  # 未知回执 → 只读核实 list
                 args_seq = [argv, ['list','--limit','3','--json']]
             else:                    # pending / hang / skip_status / slow_garbage：不再有后续引擎调用
                 args_seq = [argv]
@@ -358,6 +368,51 @@ else: sys.exit(1)
         self.assertEqual(self.recorded(), before)
         self.assertEqual((self.case / 'nudge').read_text(encoding="utf-8"), '6')
 
+    def test_stale_request_receipt_and_rmw_lock(self):
+        # 第三轮①：同会话 R1 写暂停→R2 prompt→R1 完成——旧 gen 凭证不免催 R2
+        import importlib.util as iu, time as _t, json as j
+        from pathlib import Path as P
+        import os as _os
+        spec = iu.spec_from_file_location('rh3', P(self.env['TEST_HOOK']))
+        mod = iu.module_from_spec(spec); spec.loader.exec_module(mod)
+        base = P(self.env['RESPITE_TURN_STATE'])
+        old = _os.environ.get('RESPITE_TURN_STATE')
+        try:
+            _os.environ['RESPITE_TURN_STATE'] = str(base)
+            base.mkdir(parents=True, exist_ok=True)
+            sid = 'genbind'
+            gen1 = mod.mark_prompt(sid)
+            gen2 = mod.mark_prompt(sid)
+            self.assertGreater(gen2, gen1)
+            mod.mark_store(sid, gen1)
+            self.assertFalse(mod.turn_stored(sid))     # R1 旧代凭证不免催 R2
+            mod.mark_store(sid, gen2)
+            self.assertTrue(mod.turn_stored(sid))      # R2 当前代凭证免催
+            # ② 事务锁：持新鲜锁 → _map_update 保守放弃；解锁后可用
+            lock = mod._map_lock(sid, wait_s=0.05)
+            self.assertIsNotNone(lock)
+            self.assertFalse(mod._map_update(sid, {'store_ts': _t.time(), 'store_req_ts': gen2}))
+            _os.remove(lock)
+            self.assertTrue(mod._map_update(sid, {'store_ts': _t.time(), 'store_req_ts': gen2}))
+        finally:
+            if old is not None:
+                _os.environ['RESPITE_TURN_STATE'] = old
+
+    def test_strict_envelope_id_and_schema(self):
+        # 第三轮②：数字 id 12345678、"a-------"（宽松 hex-连字符）→ unknown 不 Saved
+        for mode_key, stub_mode in (('numid', 'ok_numid'), ('dashid', 'ok_dashid')):
+            out = self.call('store: strict fact', mode=stub_mode)
+            self.assertIn('store unknown', out, mode_key)
+            self.assertNotIn('Saved', out, mode_key)
+            self.assertIn('Do NOT resend', out, mode_key)
+        # 回读三方 id 一致 + 原生字符串：summary 对但 entry.id 错/缺 → mismatch
+        out = self.call('store: strict fact ok', mode='show_wrongid')
+        self.assertIn('DIFFERENT', out)
+        self.assertNotIn('verified by read-back', out)
+        out = self.call('store: strict fact num', mode='show_numcontent')
+        self.assertIn('DIFFERENT', out)
+        self.assertNotIn('verified by read-back', out)
+
     def test_stop_never_queries_engine(self):
         # 复核整改：Stop 完全不再查询引擎——无归属的全库时间抑制已移除，也没有查库失败强迫续跑路径
         for mode in ('ok', 'recent', 'failed', 'malformed'):
@@ -506,7 +561,8 @@ class TurnStateIsolation(unittest.TestCase):
         # 任何平台/任何 tick 下「真实 mark_prompt 时刻 > 播种 store_ts」恒成立
         now = time.time()
         self.assertTrue(self.hook._map_update(
-            session, {'prompt_ts': now - prompt_ago, 'store_ts': now - store_ago}))
+            session, {'prompt_ts': now - prompt_ago, 'store_ts': now - store_ago,
+                      'store_req_ts': now - prompt_ago}))  # 同代凭证（三轮复核①语义）
 
     def test_b_write_cannot_rollback_a_new_prompt(self):
         # 复核点名的交错：A 旧 prompt_ts/store_ts → B 读旧快照 → A 新请求更新 → B 写回。

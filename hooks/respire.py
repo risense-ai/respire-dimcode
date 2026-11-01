@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.5.9"
+VERSION = "0.5.10"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -233,11 +233,44 @@ def _map_load(session: str) -> dict:
         return {}
 
 
+def _map_lock(session: str, wait_s: float = 1.0, stale_s: float = 5.0):
+    """同会话读改写事务锁：O_CREAT|O_EXCL 独占 lockfile（跨进程）。
+    temp+rename 只防半文件，不把同会话 RMW 变成事务——RMW 必须持锁进行。
+    陈旧锁兜底只看锁文件年龄（mtime>stale_s，持有者已崩）；等待超窗放弃（保守方向）。"""
+    d = _turn_dir()
+    if not d:
+        return None
+    lp = os.path.join(d, "st_" + _sid_key(session) + ".lock")
+    deadline = time.monotonic() + wait_s
+    while True:
+        try:
+            fd = os.open(lp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("utf-8"))
+            os.close(fd)
+            return lp
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lp) > stale_s:
+                    os.remove(lp)
+                    continue
+            except OSError:
+                return None
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.02)
+        except Exception:
+            return None
+
+
 def _map_update(session: str, patch: dict) -> bool:
-    """更新本会话自己的状态文件（temp+rename 原子替换）；失败返回 False，绝不抛。
-    无共享读改写：其他会话的并发写在结构上不可能回滚本会话条目。"""
+    """更新本会话自己的状态文件：跨进程事务锁内 读→改→temp+rename；失败返回 False，绝不抛。
+    ①每会话独立文件消除跨会话覆盖；②事务锁使同会话 RMW 串行化——旧快照写回不可能
+    回滚新 prompt。锁拿不到=放弃本次更新（丢免催凭证→多一轮有界收催，不产生错误免催）。"""
     p = _map_path(session)
     if not p:
+        return False
+    lock = _map_lock(session)
+    if lock is None:
         return False
     try:
         entry = _map_load(session)
@@ -249,6 +282,11 @@ def _map_update(session: str, patch: dict) -> bool:
         return True
     except Exception:
         return False
+    finally:
+        try:
+            os.remove(lock)
+        except Exception:
+            pass
 
 
 def latch_claim(session: str) -> bool:
@@ -276,19 +314,24 @@ def latch_rearm(session: str) -> None:
         pass
 
 
-def mark_prompt(session: str):
-    """真实用户请求开始：尽力记录 prompt_ts；删除一次收尾锁（重新武装）。"""
-    _map_update(session, {"prompt_ts": time.time()})
+def mark_prompt(session: str) -> float:
+    """真实用户请求开始：记录请求代 prompt_ts（=gen，返回给写路径绑定）；删除一次收尾锁。
+    latch 是硬保证；gen 归属校验防同会话旧请求延迟完成误免催新请求。"""
+    gen = time.time()
+    _map_update(session, {"prompt_ts": gen})
     latch_rearm(session)
+    return gen
 
 
-def mark_store(session: str):
-    """本层「记：」成功回执（ok/warn + 有效 id）：尽力记录本轮已存凭证，Stop 免催。"""
-    _map_update(session, {"store_ts": time.time()})
+def mark_store(session: str, gen: float = 0.0):
+    """本层「记：」成功回执：登记 store_req_ts=本次写所属请求代。
+    只有 gen 与当前 prompt_ts 完全一致的凭证才免催——R1 旧写在 R2 prompt 后完成
+    带 R1 的 gen，不会免催 R2。"""
+    _map_update(session, {"store_ts": time.time(), "store_req_ts": gen})
 
 
 def turn_stored(session: str) -> bool:
-    """本轮（同会话、prompt 之后、新鲜窗内）已有成功写回执。状态文件失效时保守返回 False。"""
+    """本轮（同会话、**凭证归属当前请求代**、新鲜窗内）已有成功写回执。保守返回 False。"""
     if not session:
         return False
     e = _map_load(session)
@@ -297,6 +340,8 @@ def turn_stored(session: str) -> bool:
     st = e.get("store_ts")
     pt = e.get("prompt_ts")
     if not isinstance(st, (int, float)) or not isinstance(pt, (int, float)):
+        return False
+    if e.get("store_req_ts") != pt:  # 旧代凭证/无代标识陈旧状态：不免催
         return False
     return st >= pt and time.time() - st < TURN_FRESH_S
 
@@ -328,13 +373,18 @@ def readback(bin_path: str, sid: str, title: str, content: str, cfg: dict, budge
         log_event(cfg, "readback", "no_entry", "", ms)
         return "unavailable"
     summ = doc.get("summary")
-    rid = str(summ.get("id") or "") if isinstance(summ, dict) else ""
-    if rid != sid:  # 返回的是别的条目：不是本条核验通过
-        log_event(cfg, "readback", "mismatch", f"id={rid[:8]}!={sid[:8]}", ms)
+    rid_raw = summ.get("id") if isinstance(summ, dict) else None
+    eid_raw = entry.get("id")
+    # 三方一致：summary.id、entry.id 都必须原生字符串且等于目标 id（任一缺失/错误=mismatch）
+    if not (isinstance(rid_raw, str) and rid_raw == sid and isinstance(eid_raw, str) and eid_raw == sid):
+        log_event(cfg, "readback", "mismatch", "id-triple", ms)
         return "mismatch"
-    et, ec = str(entry.get("title") or ""), str(entry.get("content") or "")
-    bad_title = bool(title) and et != title
-    bad_body = content.strip() != ec.strip()  # 完整正文比对（去首尾空白规范化）
+    et_raw, ec_raw = entry.get("title"), entry.get("content")
+    if not isinstance(et_raw, str) or not isinstance(ec_raw, str):
+        log_event(cfg, "readback", "mismatch", "non-string title/content", ms)
+        return "mismatch"  # 数字/数组/对象正文不强转匹配（42 ≠ "42"）
+    bad_title = bool(title) and et_raw != title
+    bad_body = content.strip() != ec_raw.strip()  # 完整正文比对（去首尾空白规范化）
     if bad_title or bad_body:
         log_event(cfg, "readback", "mismatch", f"title={bad_title} body={bad_body}", ms)
         return "mismatch"
@@ -364,7 +414,7 @@ def verify_recent_write(bin_path: str, t0: float, max_wait: float = 0):
     return str(d.get("id") or ""), str(d.get("title") or "")
 
 
-def do_store(bin_path: str, content: str, cfg: dict, session: str = "") -> str:
+def do_store(bin_path: str, content: str, cfg: dict, session: str = "", gen: float = 0.0) -> str:
     """显式落库回执状态机（对齐 CLI 信封语义，审计报告 §7.1/§7.2）：
       ok + summary.id   → 已写入：show 回读核验后回执（verified/mismatch/unavailable 如实标注）
       warn + summary.id → 已写入但有警告（parent 未解析 / post-remember hook 告警）——
@@ -409,13 +459,14 @@ def do_store(bin_path: str, content: str, cfg: dict, session: str = "") -> str:
         doc = {}
     status = str(doc.get("status") or "")
     summ = doc.get("summary")
-    sid = str(summ.get("id") or "") if isinstance(summ, dict) else ""
-    if not re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,}", sid):
-        sid = ""  # 缺失/畸形 id 一律按不可确认处理，不当有效也不当失败
+    raw_id = summ.get("id") if isinstance(summ, dict) else None
+    # 严格类型：id 必须本来就是字符串（JSON 数字 12345678 不强转）；白名单=UUID 或 16+ 位 hex
+    sid = raw_id if isinstance(raw_id, str) and re.fullmatch(
+        r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{16,}", raw_id, re.I) else ""
 
     # —— 已写入：ok / warn（warn 也是已提交，只是带警告）——
     if parse_ok and sid and status in ("ok", "warn"):
-        mark_store(session)
+        mark_store(session, gen)
         if status == "warn":
             warns = [str(e) for e in (doc.get("errors") or []) if isinstance(e, (str, int, float))][:3]
             out = "【respire · stored】Saved with warnings"
@@ -724,7 +775,7 @@ def on_prompt(data: dict, cfg: dict, engine) -> str:
         log_event(cfg, "prompt", "nomem_or_empty", prompt[:40])
         return ""
     session = str(data.get("session_id") or "")
-    mark_prompt(session)  # /nomem 只跳召回，仍是新请求（重新武装收尾锁）（T11/T18）
+    gen = mark_prompt(session)  # 真实请求：记代并重武装；/nomem 只跳召回仍是新请求
     if SKIP_PREFIX.match(prompt):
         log_event(cfg, "prompt", "nomem_or_empty", prompt[:40])
         return ""
@@ -738,7 +789,7 @@ def on_prompt(data: dict, cfg: dict, engine) -> str:
         if not engine:
             log_event(cfg, "store", "engine_missing", prompt[:40])
             return NO_RSRS
-        return do_store(engine, rest, cfg, session)
+        return do_store(engine, rest, cfg, session, gen)
     if len(prompt) < int(cfg["min_prompt_chars"]):
         log_event(cfg, "prompt", "too_short", prompt[:40])
         return ""
