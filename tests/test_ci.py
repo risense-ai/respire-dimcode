@@ -39,7 +39,7 @@ import json, os, pathlib, runpy, sys
 case = pathlib.Path(os.environ['RESPITE_CONFIG']).resolve().parent
 expected = os.environ['TEST_ENGINE']
 expected_argv = json.loads(os.environ['TEST_EXPECTED_ARGV'])
-assert isinstance(expected_argv, list) and expected_argv
+assert isinstance(expected_argv, list)  # 空序列=零引擎调用（复核⑥ Stop 不查引擎）
 for argv in expected_argv:
     assert isinstance(argv, list) and argv[0] == expected
 config = json.loads(pathlib.Path(os.environ['RESPITE_CONFIG']).read_text(encoding="utf-8"))
@@ -201,7 +201,7 @@ else: sys.exit(1)
         self.config.write_text(json.dumps({'rsrs':str(self.engine), 'session_rules':True,
                                           'store_nudge_every':every}), encoding="utf-8")
         if event == 'Stop':
-            args_seq = [['list','--limit','3','--json']]
+            args_seq = []  # 复核⑥：Stop 完全不查引擎（零调用序列）
         elif event == 'SessionStart':
             args_seq = [['status','--json']]
         elif prompt.startswith(('记：','store:')):
@@ -384,7 +384,7 @@ else: sys.exit(1)
             sid = 'failreg'
             gen1 = mod.mark_prompt(sid)
             mod.mark_store(sid, gen1)
-            self.assertTrue(mod.turn_stored(sid))
+            self.assertFalse(mod.turn_stored(sid))
             lock = mod._map_lock(sid, wait_s=0.05)
             self.assertIsNotNone(lock)
             try:
@@ -397,7 +397,7 @@ else: sys.exit(1)
             self.assertFalse(mod.turn_stored(sid))  # 登记曾失败：保守失效（多催方向）
             gen3 = mod.mark_prompt(sid)              # 恢复路径：正常登记+写入
             mod.mark_store(sid, gen3)
-            self.assertTrue(mod.turn_stored(sid))
+            self.assertFalse(mod.turn_stored(sid))
         finally:
             if old is not None:
                 _os.environ['RESPITE_TURN_STATE'] = old
@@ -421,7 +421,7 @@ else: sys.exit(1)
             sid = 'poison'
             gen1 = mod.mark_prompt(sid)
             mod.mark_store(sid, gen1)
-            self.assertTrue(mod.turn_stored(sid))
+            self.assertFalse(mod.turn_stored(sid))
             state_p = P(mod._map_path(sid))
             self.assertTrue(state_p.exists())
             orig_w, orig_u = mod._write_gen_marker, mod._map_update
@@ -435,7 +435,7 @@ else: sys.exit(1)
             self.assertFalse(mod.turn_stored(sid))        # 不凭旧记录免催
             gen3 = mod.mark_prompt(sid)                   # 恢复路径
             mod.mark_store(sid, gen3)
-            self.assertTrue(mod.turn_stored(sid))
+            self.assertFalse(mod.turn_stored(sid))
         finally:
             if old is not None:
                 _os.environ['RESPITE_TURN_STATE'] = old
@@ -456,7 +456,7 @@ else: sys.exit(1)
             sid = 'poison'
             gen1 = mod.mark_prompt(sid)
             mod.mark_store(sid, gen1)
-            self.assertTrue(mod.turn_stored(sid))
+            self.assertFalse(mod.turn_stored(sid))
             orig_w, orig_u = mod._write_gen_marker, mod._map_update
             mod._write_gen_marker = lambda s2, g2: False   # 共同写失败：标记 False
             mod._map_update = lambda s2, p2: False          # 状态 False；降级也失败
@@ -467,7 +467,7 @@ else: sys.exit(1)
             mod._map_update = orig_u
             gen3 = mod.mark_prompt(sid)                     # 完全恢复
             mod.mark_store(sid, gen3)
-            self.assertTrue(mod.turn_stored(sid))           # 免催恢复
+            self.assertFalse(mod.turn_stored(sid))           # 免催恢复
         finally:
             if old is not None:
                 _os.environ['RESPITE_TURN_STATE'] = old
@@ -523,7 +523,7 @@ else: sys.exit(1)
             mod.mark_store(sid, gen1)
             self.assertFalse(mod.turn_stored(sid))     # R1 旧代凭证不免催 R2
             mod.mark_store(sid, gen2)
-            self.assertTrue(mod.turn_stored(sid))      # R2 当前代凭证免催
+            self.assertFalse(mod.turn_stored(sid))      # R2 当前代凭证免催
             # ② 事务锁：持新鲜锁 → _map_update 保守放弃；解锁后可用
             lock = mod._map_lock(sid, wait_s=0.05)
             self.assertIsNotNone(lock)
@@ -604,14 +604,15 @@ else: sys.exit(1)
     def test_stop_after_hook_store_does_not_query_engine(self):
         self.call('store: durable fixture fact')
         before = self.recorded()
-        self.assertEqual(self.call(event='Stop'), '')
-        self.assertEqual(self.recorded(), before)
+        self.assertTrue(json.loads(self.call(event='Stop'))['decision'] == 'block')  # 复核⑥：仍催
+        self.assertEqual(self.recorded(), before)  # 零引擎查询
 
     def test_turn_receipt_suppression_is_request_scoped(self):
-        # T18：只有「同会话、本轮 prompt 之后」的成功写回执才免催；新请求不被旧轮抑制
+        # 复核⑥：磁盘凭证免催已取消——Stop 不凭旧记录免催；同请求二次 Stop 由 latch 放行
         self.call('store: durable fixture fact')
-        self.assertEqual(self.call(event='Stop'), '')
-        self.call('another ordinary input without storing')   # 新请求（未存）
+        self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')  # 仍催
+        self.assertEqual(self.call(event='Stop', active=True), '')                  # latch：同请求一次
+        self.call('another ordinary input without storing')
         self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')
 
     def test_stop_once_per_request_latch(self):
@@ -707,7 +708,7 @@ class TurnStateIsolation(unittest.TestCase):
         # 每会话独立文件下 A 的新请求状态原样保留——旧 store 不免催。
         h = self.hook
         self._seed('sessA')                        # 旧轮凭证：store_ts=now-5
-        self.assertTrue(h.turn_stored('sessA'))
+        self.assertFalse(h.turn_stored('sessA'))
         h.mark_prompt('sessA')                     # A 新真实请求（= B 读旧快照之后的 A-update）
         self.assertFalse(h.turn_stored('sessA'))
         snapshot = self._a_file().read_bytes()
@@ -732,19 +733,19 @@ class TurnStateIsolation(unittest.TestCase):
         h.mark_prompt('sessB')
         h.mark_store('sessB')
         self.assertEqual(self._a_file().read_bytes(), snapshot)
-        self.assertTrue(h.turn_stored('sessA'), 'A fresh receipt erased by B update')
+        self.assertFalse(h.turn_stored('sessA'), 'A fresh receipt erased by B update')
 
     def test_new_prompt_after_store_no_longer_suppresses(self):
         h = self.hook
         self._seed('sessA')                        # 旧轮已存 → 免催
-        self.assertTrue(h.turn_stored('sessA'))
+        self.assertFalse(h.turn_stored('sessA'))
         h.mark_prompt('sessA')                     # 新真实请求：prompt_ts>store_ts → 旧回执不免催
         self.assertFalse(h.turn_stored('sessA'))
         self._seed('sessA')                        # 新一轮：prompt 在前、store 在后 → 重新免催
-        self.assertTrue(h.turn_stored('sessA'))
+        self.assertFalse(h.turn_stored('sessA'))
         h.mark_prompt('sessB')
         h.mark_store('sessB')
-        self.assertTrue(h.turn_stored('sessA'), 'B update erased A fresh receipt')
+        self.assertFalse(h.turn_stored('sessA'), 'B update erased A fresh receipt')
 
 
 def assert_versions(root):

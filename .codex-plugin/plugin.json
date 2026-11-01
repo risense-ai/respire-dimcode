@@ -1,6 +1,6 @@
 {
   "name": "respire",
-  "version": "0.5.13",
+  "version": "0.5.14",
   "description": "respire memory for Dim: every-round title-tier recall, one-prefix store, degradation without models. Works fully offline; only encrypted records reach the cloud; enterprises can self-host the sync server. On-machine registration via rsrs register; the sidecar model is an optional boost.",
   "author": "risense-ai",
   "homepage": "https://github.com/risense-ai/respire-dimcode",

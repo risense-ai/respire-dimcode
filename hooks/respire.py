@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.5.13"
+VERSION = "0.5.14"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -394,22 +394,13 @@ def mark_store(session: str, gen: float = 0.0):
 
 
 def turn_stored(session: str) -> bool:
-    """本轮（同会话、**凭证归属当前请求代**、新鲜窗内）已有成功写回执。保守返回 False。"""
-    if not session:
-        return False
-    e = _map_load(session)
-    if not isinstance(e, dict):
-        return False
-    st = e.get("store_ts")
-    pt = e.get("prompt_ts")
-    if not isinstance(st, (int, float)) or not isinstance(pt, (int, float)):
-        return False
-    marker = _read_gen_marker(session)
-    if marker == POISON:  # 失效令牌：免催关闭（复核⑤）
-        return False
-    if marker is None or pt != marker or e.get("store_req_ts") != marker:
-        return False  # 标记缺失/镜像失真（登记失败被旧快照覆盖）/旧代凭证
-    return st >= pt and time.time() - st < TURN_FRESH_S
+    """磁盘凭证免催已**取消**（复核⑥终案）：跨事件没有可靠的「当前请求」磁盘身份——
+    unlink/写/锁的失败-恢复窗口无法闭合（④⑤⑥逐轮证伪）。防重唯一依据回归
+    **latch 语义**（nudge 时 O_EXCL 创建、下一次真实 prompt 删除）。本函数恒 False：
+    Stop 不凭任何磁盘旧记录免催；回执仍诚实输出给模型，状态文件保留作诊断轨迹。"""
+    return False
+
+
 
 
 def readback(bin_path: str, sid: str, title: str, content: str, cfg: dict, budget_s: float):
@@ -821,9 +812,6 @@ def on_stop(data: dict, cfg: dict, engine) -> str:
     # 一次收尾锁：O_EXCL 原子独占；无法落锁（含目录不可写）一律放行——绝不无锁 block
     if not latch_claim(session):
         log_event(cfg, "stop", "once_latch_skip")
-        return ""
-    if turn_stored(session):
-        log_event(cfg, "stop", "stored_turn_skip", "src=receipt")
         return ""
     # 复核整改：移除「全库最新写入时间晚于本轮 prompt 即免催」——引擎侧写入无法归属到
     # 本会话/本请求（其他会话并行写入会误抑制）。免催只认可归属凭证：本层成功写回执。
