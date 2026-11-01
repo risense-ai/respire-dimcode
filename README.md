@@ -74,8 +74,8 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 | --- | --- |
 | `SessionStart` | 注入记忆层简则（何时翻忆、如何落库、红线），对整会话与 subagent 生效；**一次探测三态**——未登录附注册引导（rsrs.rs 注册、`rsrs register` 首设备、`rsrs login --oauth --no-open` 代开授权链接）、库空（<10 条）附首日存料与导入引导、缺语义模型附**可选**装法；常态零打扰 |
 | `UserPromptSubmit` | 自动 `rsrs recall --titles`：**标题档注入**——只给分数＋8 位短 id＋标题，正文由 agent `rsrs show <id>` 按需取（附因果链）；默认**直出不过滤**，噪音边界＝rsrs skip 门＋limit 5＋标题档 |
-| `prompt` 以「记：」「存：」「remember:」开头 | 直接 `rsrs remember … --importance important` 落库并回执；判后即存判为相似时**不写入**、回执转述候选（`--parent` 挂靠或 `--force` 直写），由模型决断；回执硬约束 AI 抽「主语＋动作＋结果」事实句 `retitle` 替换暂拟题 |
-| `Stop`（AI 干完活） | **存储检查**：`block+reason` 续跑一轮，提示模型把本轮新的**事实/决定/约定/教训/踩坑**分条 `rsrs remember`（事实句标题、判重先决断）；闲聊无新事实则直接结束。规范防循环：续跑轮 `stop_hook_active=true` 即放行；节流 `store_nudge_every`（默认 1=每轮，N=每 N 轮，0=关）；近 10 分钟本库有过落库（问引擎 `list` 取最近 `updated_at`，覆盖 agent 直接 `rsrs remember`）则不再催 |
+| `prompt` 以「记：」「存：」「remember:」开头 | 直接 `rsrs remember … --importance important` 落库并回执，**回执按结果状态机**：`ok`/`warn` → **已写入**（warn 附引擎警告如 parent 未解析——不误报失败、不引导重发），随后 `show` 写后回读核验（verified / mismatch / unavailable 如实标注）；`pending` → **未写入**，转述候选（带短 id）＋引擎建议动作（改＞并＞挂＞存全量转达，先 `show` 读候选正文再决断）；超时/坏回执 → **结果未知**，回执只允许只读核实（`rsrs list`/`rsrs show`）并**明令禁止重发**（重复写风险；`ok`/`warn` 缺有效 id、畸形 summary 也归 unknown，不当失败也不当成功）；写后回读为**全量核验**（id＋标题＋完整正文），措辞如实；remember/show/list 共享 hook 时间预算（`time.monotonic()` 单调截止，不受系统时钟回拨影响；进场剩余≤0 时连 remember 也不发直接 unknown）。回执硬约束 AI 抽「主语＋动作＋结果」事实句 `retitle` 替换暂拟题 |
+| `Stop`（AI 干完活） | **存储检查**：`block+reason` 续跑一轮，提示模型把本轮新的**事实/决定/约定/教训/踩坑**分条 `rsrs remember`（事实句标题、判重先决断）；闲聊无新事实则直接结束。**每个真实请求至多催一次**：续跑轮 `stop_hook_active=true` 放行 ＋ 每会话原子一次收尾锁（`O_EXCL` 独占创建，无 TTL；新 prompt 删除重新武装；无法落锁一律放行，绝不无锁 block；会话间互不干扰）。**免催只认可归属凭证**：同会话、本轮 prompt 之后的本层成功写回执（`ok`/`warn`+id），凭证按**会话独立状态文件**存取（`st_<sid>.json`，temp+rename 原子替换）——跨会话读写互不可见，并行会话互不回滚对方凭证；引擎侧全库时间戳无法归属到会话，不再用作免催（其他会话写入会误抑制）；`Stop` 完全不查询引擎，也因此不存在查库失败强迫续跑的路径。节流 `store_nudge_every`（默认 1=每轮，N=每 N 轮，0=关） |
 | `prompt` 以 `/nomem` 开头 | 本轮跳过召回 |
 | `prompt` 带 `$skill: 名称` | 召回前剥除前缀——技能名词面会撞技能记忆 |
 | `skills/respire` | 按需加载的操作法（recall/remember/show/forget/sync 与信封解析要点）；**注意技能只是说明书，动作全由钩子驱动** |

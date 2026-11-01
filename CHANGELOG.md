@@ -1,5 +1,100 @@
 # Changelog
 
+## 0.5.14 — 2026-11-01 · 第六轮终案：取消磁盘凭证免催
+
+### Changed
+
+- **`turn_stored` 恒 False（复核⑥终案）**：跨事件（UserPromptSubmit→Stop 为两个独立进程）不存在可靠的磁盘当前请求身份——unlink/写/锁失败-恢复窗口逐轮证伪（④⑤⑥，含复审点名的「删除失败后 Stop 前恢复权限」与「锁外删除被在途写者重建」）。按复审建议**取消免催优化**：防重唯一依据回归 latch 语义（nudge 时 O_EXCL 创建、下一次真实 prompt 删除）。回执仍诚实输出给模型；状态文件保留为诊断轨迹。**另修复审#3**：删除被后置同名测试方法覆盖的旧 `test_common_write_failure_poisons_old_receipt`（Python 类保留后者导致前者从未执行）。
+
+## 0.5.13 — 2026-11-01
+## 0.5.13 — 2026-11-01 · 第五轮残余整改（unlink 失效原语）
+
+### Fixed
+
+- **删除优先的凭证失效（复核⑤残余）**：`mark_prompt` 先删除本会话状态文件再执行任何写——unlink 不需要磁盘空间，三写全失败时旧凭证仍被物理删除，当前请求 Stop（不必先有下一次 mark_prompt）不可能凭旧记录免催；unlink 因目录不可写失败时 Stop 的 latch_claim 同样失败而放行。测试按复审点名顺序：旧成功凭证→三写全失败期间调用 mark_prompt→恢复写但不调用 mark_prompt/不手写 POISON→Stop 不免催（状态文件断言已删除）→正常登记恢复。
+
+## 0.5.12 — 2026-11-01
+## 0.5.12 — 2026-11-01 · 第五轮复核整改（标记共同写失败的安全降级）
+
+### Fixed
+
+- **POISON 失效令牌（复核#1残余）**：`mark_prompt` 不再忽略写失败——gen 标记或状态文件任一写失败时立即写失效令牌（+inf）：`turn_stored` 对任何有限旧凭证返回 False，**免催优化保持关闭**（宁可多催，不凭旧磁盘凭证免催）。降级与正常标记同一写路径；连降级也失败时旧标记无新写者、恢复后首个 `mark_prompt` 必然重写。反例测试：旧同代凭证→共同写失败（旧文件保持相等可读）→POISON 写入即关闭免催→完全恢复后免催恢复。
+
+## 0.5.11 — 2026-11-01
+## 0.5.12 — 2026-11-01 · 第五轮复核整改（标记写失败安全降级）
+
+### Fixed
+
+- **POISON 失效令牌（复核⑤）**：`mark_prompt` 不再忽略写失败——gen 标记或状态任一写失败时立即写 `+inf` 失效令牌（同一盲写路径）；`turn_stored` 对 POISON 或任何有限旧凭证返回 False——免催优化保持关闭（宁可多催，不凭旧磁盘凭证免催）；恢复后首个 mark_prompt 重写标记即恢复。完整流程测试：旧凭证→共同写失败→降级→不免催；正常登记恢复；POISON 单独关闭。
+
+## 0.5.11 — 2026-11-01
+## 0.5.11 — 2026-11-01 · 第四轮复核整改（登记失效安全 + 锁所有权）
+
+### Fixed
+
+- **登记失败安全失效（复核#1）**：新增 gen 标记文件 `st_<sid>.gen`（盲写 temp+rename，无 RMW 无锁不受竞争影响）=「当前请求」真值；`mark_prompt` 先写标记再更新状态文件；`turn_stored` 要求 prompt_ts == 标记 == store_req_ts——新请求登记失败（锁超窗/写失败）时标记已推进，**旧凭证立即失效，绝不错误免催**（测试：旧请求已存→持锁令登记失败→释放→不免催；恢复路径正常登记后免催恢复）。
+- **锁所有权（复核#2）**：移除 mtime 年龄抢占；锁内容=唯一 token，`_release_lock` 只删 token 一致的锁——不抢活锁、不删后继持有者的锁（测试：活持有者期间第二进程超窗放弃；token 不匹配不删）。等待超窗放弃是安全的（配合 gen 标记）。
+
+### Changed
+
+- 测试：CI 39/39（+2：登记失败失效+恢复、锁所有权；隔离套件适配 gen 标记真值链）。
+
+## 0.5.10 — 2026-11-01
+## 0.5.10 — 2026-11-01 · 第三轮复核整改（同会话请求隔离＋严格信封）
+
+### Fixed
+
+- **请求代凭证绑定（复核#1）**：`mark_prompt` 返回 gen；`do_store` 入口捕获；`mark_store(session, gen)` 记 `store_req_ts`；`turn_stored` 要求 `store_req_ts == prompt_ts`——同会话旧请求延迟完成不免催新请求（双向屏障测试）。
+- **同会话 RMW 事务锁（复核#1）**：`_map_lock` O_EXCL lockfile（mtime>5s 陈旧兜底、等待超窗放弃）内串行化读改写——旧快照写回不可能回滚新 prompt（持锁互斥测试）。
+- **严格 ID 类型与白名单（复核#2）**：`summary.id` 必须原生字符串（JSON 数字 12345678 不再 str() 强转）；白名单收紧为 UUID 或 16+ 位 hex（`a-------` 拒绝）→ unknown。
+- **回读三方 id + 原生类型（复核#2）**：verified 需 summary.id、entry.id 均为字符串且===目标 id；title/content 必须原生字符串（数字 42 不与 "42" 匹配）——错 entry.id、缺失、非字符串正文一律 mismatch，Saved 保留。
+
+### Changed
+
+- 测试：CI 37/37（+2 测试块：请求代/RMW 锁、严格信封数字 id/横线串/错 entry.id/数字正文）。
+
+## 0.5.9 — 2026-11-01
+## 0.5.9 — 2026-11-01 · 复核二轮整改（PR #6 review round 2）
+
+### Fixed
+
+- **每会话独立状态文件，杀死跨进程 RMW 回滚（二轮主项）**：共享 `turn_map.json` 废除——它先读整表、改自己会话、temp+rename 整体写回，无跨进程锁；可复现交错「B 读旧快照 → A 新请求更新 prompt_ts 并重武装 → B 整体写回」会把 A 回滚成旧值，A 的 Stop 便会把旧写入误认本轮已写而跳过存储检查（反向交错丢新写凭证、造成多余催存）。一次成功 rename 只保证写完整，不保证事务。现为每会话 `st_<sidkey>.json`（temp+rename 原子替换），B 会话的任何写在结构上碰不到 A 的条目；新 prompt 后旧 store 凭证失效（prompt_ts>store_ts → 不免催）。0.5.8 重构时误删的 `_SCRIPT_DIR` 定义一并恢复（此前生产环境未设 `RESPITE_TURN_STATE` 时 prompt 钩子会 NameError→fail-open，召回整链失效）。
+- **readback 坏 details 类型防护（二轮#2）**：`show` 回读的 `details` 非字典（数组/字符串等）不再直接 `.get()`——AttributeError 会掀翻整条已写回执（Saved 丢失）；如实归 **unavailable**，保留已写事实并指引只读核验。
+- **monotonic 共享截止（二轮#3）**：`do_store` 预算改 `time.monotonic()` 单调钟（不受系统时钟回拨影响）；`remember` 超时取 `min(STORE_T, 剩余预算)`——紧预算不再按 18s 全窗死等；进场剩余≤0 时连 `remember` 也不发，直接按结果未知回执（禁止重发）。
+
+### Changed
+
+- 版本 0.5.8 → 0.5.9（hook `VERSION`、`.codex-plugin/plugin.json`、`.claude-plugin/marketplace.json` 插件条目补 `version`）；`.gitignore` 增 `st_*.json`/`st_*.json.*.tmp` 运行期产物。
+- 测试：CI 35/35（+6 条二轮反例：B 写回不回滚 A 新 prompt 状态、A 新写凭证不被 B 更新抹掉、A 新 prompt 后旧 store 不免催（播种时刻断言，与真实时钟粒度无关）、show 坏 details（数组/字符串）保留 Saved＋unavailable、紧预算封顶 remember 超时（含耗时上界）、进场预算耗尽零引擎调用；hang 桩改先卸 stdio/CWD——Windows 下 .cmd 壳超时 kill 后孙进程攥管道/CWD 会让超时与用例清理双双失效，全套 75s→17s）；bash 75/0 不变（既有 Stop/锁/免催行为未动）。
+
+## 0.5.8 — 2026-11-01 · 维护者复核整改（PR #6 review）
+
+### Fixed
+
+- **一次收尾锁重构（复核#1）**：`.store_turn` 单会话状态改为**每会话独立锁文件**（`O_CREAT|O_EXCL` 原子独占——并发 Stop 只有一个能落锁；锁无 TTL，25 小时后仍占用，只有新真实 prompt 删除重新武装；A→B→A 交错不丢锁）；无法落锁（状态目录不可写等）一律放行——绝不无锁 block。prompt_ts/store_ts 存于尽力维护的 per-session map（temp+rename 原子替换，仅按数量收敛），map 失败只损失免催优化。
+- **坏结构 list 不再当成功（复核#2）**：`details` 非数组、或非空却无可解析时间戳 → 按查询失败处理（不归属新条目给本次写入）。
+- **共享 hook 预算（复核#3）**：remember/回读/只读核实共用截止时间（`RESPITE_HOOK_BUDGET_S`，默认 20s，预留 2.5s 输出余量）；慢坏回执后剩余不足直接 unknown，不再追加 list。
+- **回执/回读加固（复核#4）**：`ok`/`warn` 缺有效 id（hex/uuid 白名单校验）、畸形 summary（类型防护不抛异常）、未知 status 一律归 **unknown**（禁重发）；回读改为**全量核验**：返回 id 必须=写入 id、标题相等、完整正文相等，才称 verified；否则 mismatch/unavailable 如实标注。
+- **免催凭证可归属化（复核#1 验收补全）**：移除「引擎全库最新写入晚于 prompt 即免催」（无法归属会话，B 写入会误免催 A）；`Stop` 完全不查询引擎——也因此不存在查库失败强迫续跑的路径；`/nomem` 仍算新请求（mark 提前），只跳召回不跳收尾重武装。
+
+### Changed
+
+- 测试：CI 29/29（+复核要求反例：A→B→A 交错不丢锁、锁无新 prompt 不释放、缺 id/垃圾 id/坏 summary→unknown、skip 回执非失败、错 id/尾部篡改回读→mismatch、慢坏回执+紧预算→零追加调用、坏 schema list 不归属）；bash 75/0（Stop 场景同步新契约：引擎写入不再免催＋单次 nudge 计数、坏信封/死进程仍催、状态目录不可写放行、25 小时锁仍占用、新请求与 /nomem 重武装；`RESPITE_TURN_STATE` 落锁目录改 Windows 原生可见路径）；`.gitignore` 增 `.latch_*`/`turn_map.json` 运行期产物。
+
+## 0.5.7 — 审计整改：写结果状态机＋Stop fail-open＋请求级免催凭证（DM-01~DM-04）
+
+### Fixed
+
+- **DM-02 写结果状态机**：「记：」回执不再只认 `status=ok`——`warn`+有效 id 是**已写入带警告**，如实回执附错误摘要，不误报「未接受」、不引导重发（旧实现把已提交数据当失败，诱发重复写）；超时/坏回执归为 **unknown**，回执明令「`rsrs list`/`rsrs show` 只读核实、禁止重发」，秒回坏回执自动 `list` 核对并报告可能已写。
+- **DM-01 Stop fail-open**：查库 `list` 失败/超时/坏信封/死进程时直接放行，不再 block——记忆层故障不得拦主任务结束。
+- **DM-03 请求级免催凭证**：废除「近 10 分钟任意写入」全局抑制（跨轮误抑制）；改为 `.store_turn`——同会话、本轮 prompt 之后的成功写回执或引擎侧写入才免催。pending 回执保留候选短 id 与引擎建议动作全量（改＞并＞挂＞存，§7.2）；ok/warn 后 `show` 写后回读核验（R11）。
+- **DM-04 一次收尾锁**：宿主未带 `stop_hook_active` 时同一请求也至多 block 一次；新 prompt 重新武装。
+
+### Changed
+
+- 测试：CI 桩白名单升级为有序调用序列（remember→show 回读链），spy 支持 warn/pending/silent/hang/show_mismatch；新增 8 个契约测试并翻转旧错误期望（failed→block 曾被当正确结果）。bash 套件换可移植 python 引擎桩（.cmd 包装），修 Windows 伪故障，基线 54/7 → 71/0（--store 74/0）。`RESPITE_TEST_FAST`/`RESPITE_TURN_STATE` 测试后门；README 行为表同步；`.gitignore` 增 `.store_turn`。
+
+## 0.5.6 — 疑似凭据拦截＋安装/注册口径统一
 ## 0.5.6 — 疑似凭据拦截＋安装/注册口径统一
 
 - 新增输入侧疑似凭据扫描（`contains_secret`）：prompt 命中私钥块 / sk-、ghp_、github_pat_、xox、Bearer 等高危 token / `密码|口令|私钥|passwd|api key|token|secret` 赋值形态时，该条不召回也不落库，注入 `SECRET_SKIP` 提示——补齐与 codex/pi/dsh 侧一致的防线（此前简则只写"禁存口令"而无机器门）
