@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Portable, isolated hook tests. No real engine discovery or user data access."""
+import importlib.util
 import json
 import os
 import re
@@ -8,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +81,20 @@ mode = os.environ.get('STUB_MODE', 'ok')
 list_mode = os.environ.get('STUB_LIST', mode)
 if mode == 'dead': sys.exit(7)
 if mode == 'malformed': print('not json'); sys.exit(0)
-if mode == 'hang': time.sleep(30)
+if mode == 'hang':
+    # 先把继承的 stdout/stderr 写端转投 devnull、CWD 挪出测试临时目录再挂起：
+    # Windows 下引擎是 .cmd 壳，run() 超时 kill 的只是壳——孙进程攥着管道会让
+    # communicate 阻塞到 sleep 自然结束（超时形同虚设），攥着 CWD 会让用例清理
+    # PermissionError。写端一关 EOF 立即到达（TimeoutExpired 按时抛出），CWD 一挪
+    # 孤儿进程不再锁任何测试产物。
+    try:
+        _dn = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(_dn, 1)
+        os.dup2(_dn, 2)
+        os.chdir(os.environ.get('SYSTEMROOT') or os.sep)
+    except Exception:
+        pass
+    time.sleep(30)
 if sub == 'recall':
     print(json.dumps({'status':'ok','details':[{'id':'cccccccccccccccc','title':'spy','score':0.9}]}))
 elif sub == 'remember':
@@ -107,6 +122,14 @@ elif sub == 'show':
     if mode == 'show_fail':
         print(json.dumps({'status':'fail','errors':['not found']}))
         sys.exit(2)
+    if mode == 'show_badarr':
+        print(json.dumps({'status':'ok','summary':{'id':sys.argv[2],'title':'stub'},
+                          'details':[{'broken':True}]}))
+        sys.exit(0)
+    if mode == 'show_badstr':
+        print(json.dumps({'status':'ok','summary':{'id':sys.argv[2],'title':'stub'},
+                          'details':'broken'}))
+        sys.exit(0)
     title, content = 'stub', 'stub'
     try:
         for line in open(os.environ['TEST_CALLS'], encoding='utf-8').read().splitlines():
@@ -174,7 +197,7 @@ else: sys.exit(1)
         elif prompt.startswith(('记：','store:')):
             content = prompt.replace('：',':',1).split(':',1)[1].strip()
             argv = ['remember',content,'--title',content,'--importance','important','--json']
-            if mode in ('ok','show_fail','show_mismatch','show_wrongid','show_tail'):
+            if mode in ('ok','show_fail','show_mismatch','show_wrongid','show_tail','show_badarr','show_badstr'):
                 args_seq = [argv, ['show','dddddddddddddddd','--json']]
             elif mode == 'warn':
                 args_seq = [argv, ['show','eeeeeeeeeeeeeeee','--json']]
@@ -419,6 +442,115 @@ else: sys.exit(1)
         self.positive_control()
         self.assertEqual(self.call('ordinary input', mode='malformed'), '')
         self.assertIn('parse_error', self.log.read_text(encoding="utf-8"))
+
+    def test_readback_bad_details_keeps_saved_receipt(self):
+        # 二轮复核#2：show 回读的 details 非字典（数组/字符串）→ unavailable；
+        # 类型错误绝不允许掀翻整条已写回执（丢 Saved = 把已提交数据当没写）
+        for mode in ('show_badarr', 'show_badstr'):
+            before = self.recorded()
+            out = self.call('store: durable fixture fact', mode=mode)
+            self.assertIn('Saved:', out, mode)
+            self.assertIn('Read-back unavailable', out, mode)
+            self.assertNotIn('verified by read-back', out, mode)
+            self.assertEqual([a[0] for a in self.recorded()[len(before):]], ['remember', 'show'], mode)
+
+    def test_remember_timeout_is_capped_by_remaining_budget(self):
+        # 二轮复核#3：remember 超时 = min(STORE_T, 剩余预算)（monotonic 共享截止）——
+        # 紧预算（3s 预算 → 进场仅剩 0.5s）不得按 STORE_T=18s 全窗死等（用耗时上界钉死）
+        before = self.recorded()
+        started = time.monotonic()
+        out = self.call('store: tight budget fact', mode='hang',
+                        extra_env={'RESPITE_HOOK_BUDGET_S': '3'})
+        elapsed = time.monotonic() - started
+        self.assertIn('store unknown', out)
+        self.assertIn('Do NOT resend', out)
+        self.assertEqual(len(self.recorded()) - len(before), 1)
+        self.assertLess(elapsed, 15, f'remember waited {elapsed:.1f}s - not capped by remaining budget')
+
+    def test_exhausted_budget_skips_remember_entirely(self):
+        # 二轮复核#3：进场剩余预算 ≤0 → 连 remember 也不发（零引擎调用），直接 unknown
+        before = self.recorded()
+        out = self.call('store: budget gone fact', extra_env={'RESPITE_HOOK_BUDGET_S': '2'})
+        self.assertIn('store unknown', out)
+        self.assertIn('Do NOT resend', out)
+        self.assertEqual(self.recorded(), before)
+
+
+class TurnStateIsolation(unittest.TestCase):
+    """二轮复核主项：凭证状态按会话独立文件 st_<sidkey>.json。
+    共享 turn_map 的跨进程 read-modify-write（B 读旧快照 → A 更新 → B 整体写回）
+    会把 A 的新请求凭证回滚成旧值——一次成功的原子 rename 只保证写完整，不保证事务。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='dimcode-turnstate-')
+        self.addCleanup(self.temp.cleanup)
+        self.dir = Path(self.temp.name)
+        self._saved = os.environ.get('RESPITE_TURN_STATE')
+        os.environ['RESPITE_TURN_STATE'] = str(self.dir)
+        self.addCleanup(self._restore_env)
+        spec = importlib.util.spec_from_file_location('respire_hook', ROOT / 'hooks' / 'respire.py')
+        self.hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.hook)
+
+    def _restore_env(self):
+        if self._saved is None:
+            os.environ.pop('RESPITE_TURN_STATE', None)
+        else:
+            os.environ['RESPITE_TURN_STATE'] = self._saved
+
+    def _a_file(self):
+        return self.dir / ('st_' + self.hook._sid_key('sessA') + '.json')
+
+    def _seed(self, session, prompt_ago=10.0, store_ago=5.0):
+        # 显式播种凭证时刻（相对 now 的过去偏移，prompt 在前 store 在后）：与真实时钟粒度无关，
+        # 任何平台/任何 tick 下「真实 mark_prompt 时刻 > 播种 store_ts」恒成立
+        now = time.time()
+        self.assertTrue(self.hook._map_update(
+            session, {'prompt_ts': now - prompt_ago, 'store_ts': now - store_ago}))
+
+    def test_b_write_cannot_rollback_a_new_prompt(self):
+        # 复核点名的交错：A 旧 prompt_ts/store_ts → B 读旧快照 → A 新请求更新 → B 写回。
+        # 共享 map 下 B 的整体写回会把 A 回滚成旧值（旧 store 被误认本轮已写而跳过存储检查）；
+        # 每会话独立文件下 A 的新请求状态原样保留——旧 store 不免催。
+        h = self.hook
+        self._seed('sessA')                        # 旧轮凭证：store_ts=now-5
+        self.assertTrue(h.turn_stored('sessA'))
+        h.mark_prompt('sessA')                     # A 新真实请求（= B 读旧快照之后的 A-update）
+        self.assertFalse(h.turn_stored('sessA'))
+        snapshot = self._a_file().read_bytes()
+        h.mark_prompt('sessB')                     # B-write：恢复执行、更新自己的条目并写回
+        h.mark_store('sessB')
+        h.mark_prompt('sessB')
+        h.mark_store('sessB')
+        self.assertEqual(self._a_file().read_bytes(), snapshot,
+                         'B session write rewrote A state (cross-process RMW rollback)')
+        self.assertFalse(h.turn_stored('sessA'),
+                         'A rolled back to the old prompt/store pair - stale store would suppress Stop')
+        names = sorted(p.name for p in self.dir.iterdir())
+        self.assertNotIn('turn_map.json', names)
+        self.assertEqual(len([n for n in names if n.startswith('st_')]), 2)
+
+    def test_a_fresh_receipt_survives_b_updates(self):
+        # 反向交错：A 刚写成功的凭证不被 B 的更新抹掉（否则会造成多余催存）
+        h = self.hook
+        self._seed('sessA')
+        snapshot = self._a_file().read_bytes()
+        h.mark_prompt('sessB')
+        h.mark_store('sessB')
+        self.assertEqual(self._a_file().read_bytes(), snapshot)
+        self.assertTrue(h.turn_stored('sessA'), 'A fresh receipt erased by B update')
+
+    def test_new_prompt_after_store_no_longer_suppresses(self):
+        h = self.hook
+        self._seed('sessA')                        # 旧轮已存 → 免催
+        self.assertTrue(h.turn_stored('sessA'))
+        h.mark_prompt('sessA')                     # 新真实请求：prompt_ts>store_ts → 旧回执不免催
+        self.assertFalse(h.turn_stored('sessA'))
+        self._seed('sessA')                        # 新一轮：prompt 在前、store 在后 → 重新免催
+        self.assertTrue(h.turn_stored('sessA'))
+        h.mark_prompt('sessB')
+        h.mark_store('sessB')
+        self.assertTrue(h.turn_stored('sessA'), 'B update erased A fresh receipt')
 
 
 def assert_versions(root):

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.9 — 2026-11-01 · 复核二轮整改（PR #6 review round 2）
+
+### Fixed
+
+- **每会话独立状态文件，杀死跨进程 RMW 回滚（二轮主项）**：共享 `turn_map.json` 废除——它先读整表、改自己会话、temp+rename 整体写回，无跨进程锁；可复现交错「B 读旧快照 → A 新请求更新 prompt_ts 并重武装 → B 整体写回」会把 A 回滚成旧值，A 的 Stop 便会把旧写入误认本轮已写而跳过存储检查（反向交错丢新写凭证、造成多余催存）。一次成功 rename 只保证写完整，不保证事务。现为每会话 `st_<sidkey>.json`（temp+rename 原子替换），B 会话的任何写在结构上碰不到 A 的条目；新 prompt 后旧 store 凭证失效（prompt_ts>store_ts → 不免催）。0.5.8 重构时误删的 `_SCRIPT_DIR` 定义一并恢复（此前生产环境未设 `RESPITE_TURN_STATE` 时 prompt 钩子会 NameError→fail-open，召回整链失效）。
+- **readback 坏 details 类型防护（二轮#2）**：`show` 回读的 `details` 非字典（数组/字符串等）不再直接 `.get()`——AttributeError 会掀翻整条已写回执（Saved 丢失）；如实归 **unavailable**，保留已写事实并指引只读核验。
+- **monotonic 共享截止（二轮#3）**：`do_store` 预算改 `time.monotonic()` 单调钟（不受系统时钟回拨影响）；`remember` 超时取 `min(STORE_T, 剩余预算)`——紧预算不再按 18s 全窗死等；进场剩余≤0 时连 `remember` 也不发，直接按结果未知回执（禁止重发）。
+
+### Changed
+
+- 版本 0.5.8 → 0.5.9（hook `VERSION`、`.codex-plugin/plugin.json`、`.claude-plugin/marketplace.json` 插件条目补 `version`）；`.gitignore` 增 `st_*.json`/`st_*.json.*.tmp` 运行期产物。
+- 测试：CI 35/35（+6 条二轮反例：B 写回不回滚 A 新 prompt 状态、A 新写凭证不被 B 更新抹掉、A 新 prompt 后旧 store 不免催（播种时刻断言，与真实时钟粒度无关）、show 坏 details（数组/字符串）保留 Saved＋unavailable、紧预算封顶 remember 超时（含耗时上界）、进场预算耗尽零引擎调用；hang 桩改先卸 stdio/CWD——Windows 下 .cmd 壳超时 kill 后孙进程攥管道/CWD 会让超时与用例清理双双失效，全套 75s→17s）；bash 75/0 不变（既有 Stop/锁/免催行为未动）。
+
 ## 0.5.8 — 2026-11-01 · 维护者复核整改（PR #6 review）
 
 ### Fixed
