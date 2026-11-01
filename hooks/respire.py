@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.5.12"
+VERSION = "0.5.13"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -353,6 +353,18 @@ def _read_gen_marker(session: str):
 POISON = float("inf")  # 失效令牌：标记写失败时写入，任何有限凭证永久不匹配（免催安全关闭）
 
 
+def _invalidate_state(session: str) -> None:
+    """删除本会话状态文件——旧凭证失效的**可靠原语**：unlink 不需要磁盘空间、
+    不受写故障影响。ENOENT=无文件可失效；其他错误忽略：若因目录不可写失败，
+    Stop 的 latch_claim（O_EXCL 创建）同样失败而放行。"""
+    p = _map_path(session)
+    if p:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+
+
 def _poison_marker(session: str) -> bool:
     """登记失败的安全降级（复核⑤）：把标记写成 +inf——走同一盲写路径；
     若连它也失败，旧标记无新写者，恢复后首个 mark_prompt 必然重写标记。"""
@@ -360,15 +372,16 @@ def _poison_marker(session: str) -> bool:
 
 
 def mark_prompt(session: str) -> float:
-    """真实用户请求开始：先盲写 gen 标记（当前请求真值），再更新状态文件、删一次收尾锁。
-    **标记或状态任一写失败 → 立即写失效令牌（+inf）**：turn_stored 对任何有限旧凭证
-    返回 False——本会话免催优化保持关闭（宁可多催，不凭旧磁盘凭证免催）。"""
+    """真实用户请求开始：**先删除旧状态文件**（可靠失效，复核⑤残余：普通 marker/
+    state/POISON 三写均失败时 unlink 仍成功——不需要磁盘空间），再写 gen 标记、
+    状态文件、删一次收尾锁。写失败时叠加 POISON 令牌降级。"""
     gen = time.time()
+    _invalidate_state(session)  # 删除优先于一切写：唯一不依赖写能力的失效原语
     if not _write_gen_marker(session, gen):
         _poison_marker(session)
     if not _map_update(session, {"prompt_ts": gen}):
         if _read_gen_marker(session) != gen:
-            _poison_marker(session)  # 状态与标记都未写成功：降级关闭免催
+            _poison_marker(session)
     latch_rearm(session)
     return gen
 

@@ -405,14 +405,16 @@ else: sys.exit(1)
                 _os.environ.pop('RESPITE_TURN_STATE', None)
 
     def test_common_write_failure_poisons_old_receipt(self):
-        # 第五轮：旧同代凭证 → 新 gen/状态写入均失败 → 降级 → 不免催；正常登记恢复
-        import importlib.util as iu, tempfile as tf, shutil as sh
+        # 第五轮残余（复审点名顺序）：旧成功凭证 → 三写全失败期间调用 mark_prompt
+        # → 恢复写能力但不调用 mark_prompt/不手写 POISON → 当前请求 Stop 不免催
+        # → 正常登记恢复。关键：失效靠 _invalidate_state 的 unlink（无需磁盘空间）。
+        import importlib.util as iu, tempfile, shutil
         from pathlib import Path as P
         import os as _os
         spec = iu.spec_from_file_location('rh7', ROOT / 'hooks' / 'respire.py')
         mod = iu.module_from_spec(spec); spec.loader.exec_module(mod)
-        base = P(tf.mkdtemp(prefix='dimcode-r5-'))
-        self.addCleanup(sh.rmtree, base, True)
+        base = P(tempfile.mkdtemp(prefix='dimcode-r5b-'))
+        self.addCleanup(shutil.rmtree, base, True)
         old = _os.environ.get('RESPITE_TURN_STATE')
         _os.environ['RESPITE_TURN_STATE'] = str(base)
         try:
@@ -420,25 +422,25 @@ else: sys.exit(1)
             gen1 = mod.mark_prompt(sid)
             mod.mark_store(sid, gen1)
             self.assertTrue(mod.turn_stored(sid))
+            state_p = P(mod._map_path(sid))
+            self.assertTrue(state_p.exists())
             orig_w, orig_u = mod._write_gen_marker, mod._map_update
-            mod._write_gen_marker = lambda s2, g2: False   # 共同写失败
-            mod._map_update = lambda s2, p2: False
-            mod._write_gen_marker = orig_w                 # 降级写恢复
-            mod._map_update = lambda s2, p2: False          # 状态持续失败
-            gen2 = mod.mark_prompt(sid)                     # 标记写成功（新代），状态失败
-            self.assertFalse(mod.turn_stored(sid))          # 旧凭证 != 新标记 → 不免催
+            mod._write_gen_marker = lambda s2, g2: False  # marker+POISON 全失败
+            mod._map_update = lambda s2, p2: False        # state 失败
+            mod.mark_prompt(sid)                          # 真实调用：unlink 删旧状态
+            mod._write_gen_marker = orig_w                # 恢复写能力
             mod._map_update = orig_u
-            gen3 = mod.mark_prompt(sid)
+            # 不调用 mark_prompt、不手写 POISON——当前请求 Stop：
+            self.assertFalse(state_p.exists())            # 旧状态已物理删除
+            self.assertFalse(mod.turn_stored(sid))        # 不凭旧记录免催
+            gen3 = mod.mark_prompt(sid)                   # 恢复路径
             mod.mark_store(sid, gen3)
-            self.assertTrue(mod.turn_stored(sid))           # 正常恢复
-            self.assertTrue(mod._poison_marker(sid))
-            self.assertFalse(mod.turn_stored(sid))          # POISON：任何有限凭证失效
+            self.assertTrue(mod.turn_stored(sid))
         finally:
             if old is not None:
                 _os.environ['RESPITE_TURN_STATE'] = old
             else:
                 _os.environ.pop('RESPITE_TURN_STATE', None)
-
     def test_common_write_failure_poisons_old_receipt(self):
         # 第五轮：旧同代成功凭证→共同写失败（旧文件保持可读）→降级/恢复→不免催；正常登记恢复
         import importlib.util as iu, tempfile, shutil
