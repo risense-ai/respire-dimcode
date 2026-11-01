@@ -34,7 +34,7 @@ pr = os.environ.get("PROMPT_VAL", "")
 d = {"hook_event_name": ev, "cwd": "/tmp", "session_id": sess}
 if ev == "UserPromptSubmit":
     d["prompt"] = pr
-sys.stdout.write(json.dumps(d, ensure_ascii=False))
+sys.stdout.buffer.write(json.dumps(d, ensure_ascii=False).encode("utf-8"))  # buffer 直写 UTF-8——Windows 默认码页会把 CJK 写成乱码
 PY
 }
 
