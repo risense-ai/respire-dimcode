@@ -404,6 +404,41 @@ else: sys.exit(1)
             else:
                 _os.environ.pop('RESPITE_TURN_STATE', None)
 
+    def test_common_write_failure_poisons_old_receipt(self):
+        # 第五轮：旧同代凭证 → 新 gen/状态写入均失败 → 降级 → 不免催；正常登记恢复
+        import importlib.util as iu, tempfile as tf, shutil as sh
+        from pathlib import Path as P
+        import os as _os
+        spec = iu.spec_from_file_location('rh7', ROOT / 'hooks' / 'respire.py')
+        mod = iu.module_from_spec(spec); spec.loader.exec_module(mod)
+        base = P(tf.mkdtemp(prefix='dimcode-r5-'))
+        self.addCleanup(sh.rmtree, base, True)
+        old = _os.environ.get('RESPITE_TURN_STATE')
+        _os.environ['RESPITE_TURN_STATE'] = str(base)
+        try:
+            sid = 'poison'
+            gen1 = mod.mark_prompt(sid)
+            mod.mark_store(sid, gen1)
+            self.assertTrue(mod.turn_stored(sid))
+            orig_w, orig_u = mod._write_gen_marker, mod._map_update
+            mod._write_gen_marker = lambda s2, g2: False   # 共同写失败
+            mod._map_update = lambda s2, p2: False
+            mod._write_gen_marker = orig_w                 # 降级写恢复
+            mod._map_update = lambda s2, p2: False          # 状态持续失败
+            gen2 = mod.mark_prompt(sid)                     # 标记写成功（新代），状态失败
+            self.assertFalse(mod.turn_stored(sid))          # 旧凭证 != 新标记 → 不免催
+            mod._map_update = orig_u
+            gen3 = mod.mark_prompt(sid)
+            mod.mark_store(sid, gen3)
+            self.assertTrue(mod.turn_stored(sid))           # 正常恢复
+            self.assertTrue(mod._poison_marker(sid))
+            self.assertFalse(mod.turn_stored(sid))          # POISON：任何有限凭证失效
+        finally:
+            if old is not None:
+                _os.environ['RESPITE_TURN_STATE'] = old
+            else:
+                _os.environ.pop('RESPITE_TURN_STATE', None)
+
     def test_lock_ownership_no_steal_no_wrong_release(self):
         # 第四轮②：无年龄抢占（活持有者期间第二进程超窗放弃）；token 校验释放
         import importlib.util as iu

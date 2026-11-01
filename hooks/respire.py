@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.5.11"
+VERSION = "0.5.12"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -350,12 +350,25 @@ def _read_gen_marker(session: str):
         return None
 
 
+POISON = float("inf")  # 失效令牌：标记写失败时写入，任何有限凭证永久不匹配（免催安全关闭）
+
+
+def _poison_marker(session: str) -> bool:
+    """登记失败的安全降级（复核⑤）：把标记写成 +inf——走同一盲写路径；
+    若连它也失败，旧标记无新写者，恢复后首个 mark_prompt 必然重写标记。"""
+    return _write_gen_marker(session, POISON)
+
+
 def mark_prompt(session: str) -> float:
     """真实用户请求开始：先盲写 gen 标记（当前请求真值），再更新状态文件、删一次收尾锁。
-    标记推进后旧凭证立即失效——登记失败也不会错误免催。"""
+    **标记或状态任一写失败 → 立即写失效令牌（+inf）**：turn_stored 对任何有限旧凭证
+    返回 False——本会话免催优化保持关闭（宁可多催，不凭旧磁盘凭证免催）。"""
     gen = time.time()
-    _write_gen_marker(session, gen)
-    _map_update(session, {"prompt_ts": gen})
+    if not _write_gen_marker(session, gen):
+        _poison_marker(session)
+    if not _map_update(session, {"prompt_ts": gen}):
+        if _read_gen_marker(session) != gen:
+            _poison_marker(session)  # 状态与标记都未写成功：降级关闭免催
     latch_rearm(session)
     return gen
 
@@ -379,6 +392,8 @@ def turn_stored(session: str) -> bool:
     if not isinstance(st, (int, float)) or not isinstance(pt, (int, float)):
         return False
     marker = _read_gen_marker(session)
+    if marker == POISON:  # 失效令牌：免催关闭（复核⑤）
+        return False
     if marker is None or pt != marker or e.get("store_req_ts") != marker:
         return False  # 标记缺失/镜像失真（登记失败被旧快照覆盖）/旧代凭证
     return st >= pt and time.time() - st < TURN_FRESH_S
