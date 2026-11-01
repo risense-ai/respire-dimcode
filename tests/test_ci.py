@@ -286,7 +286,7 @@ else: sys.exit(1)
 
     def test_session_uses_only_stub_status(self):
         out = self.call(event='SessionStart')
-        self.assertIn('respire memory layer', out)
+        self.assertIn('respire memory discipline', out)
         self.assertNotIn('not signed in', out)
         self.assertEqual([args[0] for args in self.recorded()], ['status'])
 
