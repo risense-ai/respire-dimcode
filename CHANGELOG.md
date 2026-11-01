@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.15 — 2026-11-01 · 提示词精简为纯英文记忆纪律
+
+### Changed
+
+- **`RULES` 与 `SKILL.md` 改为纯英文、只留记忆纪律**：召回先行（回合首个工具调用）、遇障先 recall、因果链 `chain --depth 3`、判重 update→merge→attach→create、标题主语+动作+结果、信任边界、密钥禁入、失败诚实；删除 CLI 解析教程、同步账号引导、数据安全宣传、操作流程清单等非记忆内容。
+- **删除 SessionStart 附加提示段**：`LOGIN_NUDGE`、`EMPTY_NUDGE`、`NO_MODEL`、`PROBE_FAIL` 及 `check_model()`、对应伪造后门一并移除；`probe_status()` 现仅作诊断留痕，不再追加任何提示。
+- **`NO_RSRS` 精简**：只保留装引擎与注册两步，恢复码与 `--super` 禁令不放宽。
+- 测试断言同步：`test_hooks.sh`、`test_ci.py` 改匹配新英文首行并删除已移除提示段的断言。
+
 ## 0.5.14 — 2026-11-01 · 第六轮终案：取消磁盘凭证免催
 
 ### Changed
