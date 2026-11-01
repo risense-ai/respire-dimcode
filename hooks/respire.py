@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.5.10"
+VERSION = "0.5.11"
 
 # 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
 RECALL_T = 14
@@ -233,33 +233,42 @@ def _map_load(session: str) -> dict:
         return {}
 
 
-def _map_lock(session: str, wait_s: float = 1.0, stale_s: float = 5.0):
-    """同会话读改写事务锁：O_CREAT|O_EXCL 独占 lockfile（跨进程）。
-    temp+rename 只防半文件，不把同会话 RMW 变成事务——RMW 必须持锁进行。
-    陈旧锁兜底只看锁文件年龄（mtime>stale_s，持有者已崩）；等待超窗放弃（保守方向）。"""
+def _map_lock(session: str, wait_s: float = 1.0):
+    """同会话读改写事务锁：O_CREAT|O_EXCL 独占 lockfile（跨进程），内容=所有权 token。
+    **不以锁龄推断持有者死亡**——等待超窗一律放弃；放弃是安全的（gen 标记使
+    未登记的新请求不信任旧凭证）。释放只删 token 一致的锁（_release_lock）。"""
     d = _turn_dir()
     if not d:
         return None
     lp = os.path.join(d, "st_" + _sid_key(session) + ".lock")
+    token = "%d-%d" % (os.getpid(), time.monotonic_ns())
     deadline = time.monotonic() + wait_s
     while True:
         try:
             fd = os.open(lp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, str(os.getpid()).encode("utf-8"))
+            os.write(fd, token.encode("utf-8"))
             os.close(fd)
-            return lp
+            return lp, token
         except FileExistsError:
-            try:
-                if time.time() - os.path.getmtime(lp) > stale_s:
-                    os.remove(lp)
-                    continue
-            except OSError:
-                return None
             if time.monotonic() >= deadline:
                 return None
             time.sleep(0.02)
         except Exception:
             return None
+
+
+def _release_lock(lock):
+    """所有权校验释放：锁文件内容==自身 token 才删除——绝不误删后继持有者的锁。"""
+    if not lock:
+        return
+    lp, token = lock
+    try:
+        with open(lp, encoding="utf-8") as f:
+            if f.read().strip() != token:
+                return
+        os.remove(lp)
+    except Exception:
+        pass
 
 
 def _map_update(session: str, patch: dict) -> bool:
@@ -283,10 +292,7 @@ def _map_update(session: str, patch: dict) -> bool:
     except Exception:
         return False
     finally:
-        try:
-            os.remove(lock)
-        except Exception:
-            pass
+        _release_lock(lock)
 
 
 def latch_claim(session: str) -> bool:
@@ -314,10 +320,41 @@ def latch_rearm(session: str) -> None:
         pass
 
 
+def _gen_marker_path(session: str):
+    d = _turn_dir()
+    return os.path.join(d, "st_" + _sid_key(session) + ".gen") if d else None
+
+
+def _write_gen_marker(session: str, gen: float) -> bool:
+    """当前请求代标记：盲写 temp+rename（单值覆盖，无读改写→无锁，不会失败于锁竞争）。
+    它是「当前请求是谁」的真值：新请求即使 _map_update 因锁超窗失败，标记也已推进，
+    旧凭证立即失效（复核④①）。"""
+    p = _gen_marker_path(session)
+    if not p:
+        return False
+    try:
+        tmp = "%s.%d.tmp" % (p, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(repr(float(gen)))
+        os.replace(tmp, p)
+        return True
+    except Exception:
+        return False
+
+
+def _read_gen_marker(session: str):
+    try:
+        with open(_gen_marker_path(session), encoding="utf-8") as f:
+            return float(f.read().strip())
+    except Exception:
+        return None
+
+
 def mark_prompt(session: str) -> float:
-    """真实用户请求开始：记录请求代 prompt_ts（=gen，返回给写路径绑定）；删除一次收尾锁。
-    latch 是硬保证；gen 归属校验防同会话旧请求延迟完成误免催新请求。"""
+    """真实用户请求开始：先盲写 gen 标记（当前请求真值），再更新状态文件、删一次收尾锁。
+    标记推进后旧凭证立即失效——登记失败也不会错误免催。"""
     gen = time.time()
+    _write_gen_marker(session, gen)
     _map_update(session, {"prompt_ts": gen})
     latch_rearm(session)
     return gen
@@ -341,8 +378,9 @@ def turn_stored(session: str) -> bool:
     pt = e.get("prompt_ts")
     if not isinstance(st, (int, float)) or not isinstance(pt, (int, float)):
         return False
-    if e.get("store_req_ts") != pt:  # 旧代凭证/无代标识陈旧状态：不免催
-        return False
+    marker = _read_gen_marker(session)
+    if marker is None or pt != marker or e.get("store_req_ts") != marker:
+        return False  # 标记缺失/镜像失真（登记失败被旧快照覆盖）/旧代凭证
     return st >= pt and time.time() - st < TURN_FRESH_S
 
 

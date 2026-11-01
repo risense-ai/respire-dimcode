@@ -368,6 +368,72 @@ else: sys.exit(1)
         self.assertEqual(self.recorded(), before)
         self.assertEqual((self.case / 'nudge').read_text(encoding="utf-8"), '6')
 
+    def test_prompt_registration_failure_invalidates_old_receipt(self):
+        # 第四轮①：旧请求已存→持锁令新登记失败→释放→新请求 Stop 不凭旧记录免催
+        import importlib.util as iu, time as _t
+        from pathlib import Path as P
+        import os as _os
+        spec = iu.spec_from_file_location('rh5', ROOT / 'hooks' / 'respire.py')
+        mod = iu.module_from_spec(spec); spec.loader.exec_module(mod)
+        import tempfile, shutil
+        base = P(tempfile.mkdtemp(prefix='dimcode-r4-'))
+        self.addCleanup(shutil.rmtree, base, True)
+        old = _os.environ.get('RESPITE_TURN_STATE')
+        _os.environ['RESPITE_TURN_STATE'] = str(base)
+        try:
+            sid = 'failreg'
+            gen1 = mod.mark_prompt(sid)
+            mod.mark_store(sid, gen1)
+            self.assertTrue(mod.turn_stored(sid))
+            lock = mod._map_lock(sid, wait_s=0.05)
+            self.assertIsNotNone(lock)
+            try:
+                gen2 = mod.mark_prompt(sid)   # 标记盲写成功；状态更新因锁失败
+                self.assertFalse(mod.turn_stored(sid))  # 旧凭证已被标记失效
+            finally:
+                mod._release_lock(lock)
+            self.assertFalse(mod.turn_stored(sid))
+            mod.mark_store(sid, gen2)
+            self.assertFalse(mod.turn_stored(sid))  # 登记曾失败：保守失效（多催方向）
+            gen3 = mod.mark_prompt(sid)              # 恢复路径：正常登记+写入
+            mod.mark_store(sid, gen3)
+            self.assertTrue(mod.turn_stored(sid))
+        finally:
+            if old is not None:
+                _os.environ['RESPITE_TURN_STATE'] = old
+            else:
+                _os.environ.pop('RESPITE_TURN_STATE', None)
+
+    def test_lock_ownership_no_steal_no_wrong_release(self):
+        # 第四轮②：无年龄抢占（活持有者期间第二进程超窗放弃）；token 校验释放
+        import importlib.util as iu
+        from pathlib import Path as P
+        import os as _os, tempfile, shutil
+        spec = iu.spec_from_file_location('rh6', ROOT / 'hooks' / 'respire.py')
+        mod = iu.module_from_spec(spec); spec.loader.exec_module(mod)
+        base = P(tempfile.mkdtemp(prefix='dimcode-l4-'))
+        self.addCleanup(shutil.rmtree, base, True)
+        old = _os.environ.get('RESPITE_TURN_STATE')
+        _os.environ['RESPITE_TURN_STATE'] = str(base)
+        try:
+            sid = 'locks'
+            first = mod._map_lock(sid, wait_s=0.05)
+            self.assertIsNotNone(first)
+            self.assertIsNone(mod._map_lock(sid, wait_s=0.05))  # 等待超窗放弃，不抢
+            self.assertIsNone(mod._map_lock(sid, wait_s=0.05))
+            lp = P(first[0])
+            lp.write_text('other-holder-token', encoding='utf-8')
+            mod._release_lock(first)      # token 不匹配：不删后继的锁
+            self.assertTrue(lp.exists())
+            lp.write_text(first[1], encoding='utf-8')
+            mod._release_lock(first)
+            self.assertFalse(lp.exists())
+        finally:
+            if old is not None:
+                _os.environ['RESPITE_TURN_STATE'] = old
+            else:
+                _os.environ.pop('RESPITE_TURN_STATE', None)
+
     def test_stale_request_receipt_and_rmw_lock(self):
         # 第三轮①：同会话 R1 写暂停→R2 prompt→R1 完成——旧 gen 凭证不免催 R2
         import importlib.util as iu, time as _t, json as j
@@ -392,7 +458,7 @@ else: sys.exit(1)
             lock = mod._map_lock(sid, wait_s=0.05)
             self.assertIsNotNone(lock)
             self.assertFalse(mod._map_update(sid, {'store_ts': _t.time(), 'store_req_ts': gen2}))
-            _os.remove(lock)
+            mod._release_lock(lock)
             self.assertTrue(mod._map_update(sid, {'store_ts': _t.time(), 'store_req_ts': gen2}))
         finally:
             if old is not None:
@@ -563,6 +629,7 @@ class TurnStateIsolation(unittest.TestCase):
         self.assertTrue(self.hook._map_update(
             session, {'prompt_ts': now - prompt_ago, 'store_ts': now - store_ago,
                       'store_req_ts': now - prompt_ago}))  # 同代凭证（三轮复核①语义）
+        self.assertTrue(self.hook._write_gen_marker(session, now - prompt_ago))  # ④①真值链：标记同步
 
     def test_b_write_cannot_rollback_a_new_prompt(self):
         # 复核点名的交错：A 旧 prompt_ts/store_ts → B 读旧快照 → A 新请求更新 → B 写回。
@@ -584,7 +651,8 @@ class TurnStateIsolation(unittest.TestCase):
                          'A rolled back to the old prompt/store pair - stale store would suppress Stop')
         names = sorted(p.name for p in self.dir.iterdir())
         self.assertNotIn('turn_map.json', names)
-        self.assertEqual(len([n for n in names if n.startswith('st_')]), 2)
+        # 每会话恰一个状态文件（.gen 标记与 .lock 为伴生运行时文件，不计入）
+        self.assertEqual(len([n for n in names if n.startswith('st_') and n.endswith('.json')]), 2)
 
     def test_a_fresh_receipt_survives_b_updates(self):
         # 反向交错：A 刚写成功的凭证不被 B 的更新抹掉（否则会造成多余催存）
