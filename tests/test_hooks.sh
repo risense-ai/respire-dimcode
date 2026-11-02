@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# respire self-test -- feeds stdin event JSON and asserts branch by branch.
-# rsrs has no data-dir isolation (runtime singleton plus a global client.json), so the default read-only branches never touch the store;
-# --store enables the write probe (writes to the real store, asserts the receipt, then cleans up with rsrs forget).
+# respire self-test -- simulated stdin event JSON, branch-by-branch assertions.
+# rsrs has no data-dir isolation (singleton runtime plus global client.json), so read-only branches never touch the store;
+# --store is retained for compatibility; prefixes never write.
 set -u
 export MSYS2_ENV_CONV_EXCL='PROMPT_VAL'  # MSYS rewrites even env values like "/nomem ..." into Windows paths -- exempt the prompt var only
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -147,37 +147,17 @@ run_stub() {
 STOP_JSON='{"hook_event_name": "Stop", "stop_hook_active": false, "session_id": "selftest"}'
 reset_state() { rm -rf "$TMP/turnstate" "$TMP/nudge"; }
 
-# ---- Write receipt state machine (7.1/7.2 contract; fully stubbed, no real-store dependency) --
+# ---- Store prefix: no write, model decides placement; receipt helpers are covered by test_ci.py. ----
 FACT="fixed stub fact sentence one."
 reset_state
-out=$(STUB_TITLE="$FACT" STUB_CONTENT="$FACT" run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"$STORE_TRIGGER$FACT\", \"session_id\": \"selftest\"}" rem_ok)
-check "ok write receipt includes short id" "$out" "has:(dddddddd)"
-check "ok write is verified by read-back" "$out" "has:verified by read-back"
-check "ok receipt tells the AI to extract a fact sentence and retitle" "$out" "has:rsrs retitle dddddddd"
-out=$(STUB_TITLE="$FACT" STUB_CONTENT="$FACT" run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"$STORE_TRIGGER$FACT\", \"session_id\": \"selftest\"}" rem_warn)
-check "warn is written, not misreported as failure" "$out" "has:Saved with warnings"
-check "warn receipt attaches the engine warning summary" "$out" "has:parent (cause) cannot be resolved"
-check "warn does not prompt a resend" "$out" "hasnt:did not accept"
-check "warn still offers the retitle entry point" "$out" "has:retitle eeeeeeee"
-out=$(run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"$STORE_TRIGGER$FACT\", \"session_id\": \"selftest\"}" rem_pend)
-check "pending states it was not written" "$out" "has:nothing was written"
-check "pending restates candidates with short id" "$out" "has:[aaaabbbb]"
-check "pending keeps the merge suggestion" "$out" "has:--merge-ids"
-check "pending keeps the force suggestion" "$out" "has:--force"
-out=$(run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"$STORE_TRIGGER$FACT\", \"session_id\": \"selftest\"}" rem_silent stale)
-check "bad receipt becomes unknown" "$out" "has:store unknown"
-check "unknown points to read-only verification" "$out" "has:rsrs list --limit 3"
-check "unknown forbids a resend" "$out" "has:Do NOT resend"
-check "unknown is not misreported as failure" "$out" "hasnt:did not accept"
-out=$(run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"$STORE_TRIGGER$FACT\", \"session_id\": \"selftest\"}" rem_silent fresh)
-check "unknown plus a new entry reports a possible write" "$out" "has:may already be written"
-check "unknown plus a new entry gives the read-only id" "$out" "has:rsrs show ffffffff"
-out=$(run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"$STORE_TRIGGER$FACT\", \"session_id\": \"selftest\"}" rem_slow)
-check "timeout becomes unknown" "$out" "has:store unknown"
-check "timeout receipt forbids a resend" "$out" "has:Do NOT resend"
-check "timeout does not ask for a manual remember" "$out" "hasnt:run rsrs remember manually"
-out=$(STUB_TITLE="$FACT" STUB_CONTENT="$FACT" run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"$STORE_TRIGGER$FACT\", \"session_id\": \"selftest\"}" rem_showbad)
-check "read-back mismatch is labelled honestly" "$out" "has:DIFFERENT title/content"
+for mode in rem_ok rem_warn rem_pend rem_silent rem_slow rem_showbad; do
+  out=$(run_stub UserPromptSubmit "{\"prompt\": \"remember: $FACT\", \"session_id\": \"selftest\"}" "$mode")
+  check "prefix pending ($mode)" "$out" "has:Nothing was written"
+  check "prefix reads policy ($mode)" "$out" "has:rsrs prompt"
+  check "prefix reads candidates ($mode)" "$out" "has:rsrs show <id> --json"
+  check "prefix placement order ($mode)" "$out" "has:update > merge > attach > new"
+  check "prefix has no success receipt ($mode)" "$out" "hasnt:Saved:"
+done
 
 # ---- Stop store check (new contract: fail-open + request-level receipt + one-shot latch; each scenario gets a fresh state) --
 STOP_JSON='{"hook_event_name": "Stop", "stop_hook_active": false, "session_id": "selftest"}'
@@ -356,6 +336,12 @@ grep -aqE '^recall( |$)' "$TMP/spy.log" 2>/dev/null || SPY_ALIVE=0
 printf '%s' "$spy_out" | grep -aqF "auto-recall" || SPY_ALIVE=0
 
 if [ "$SPY_ALIVE" = 1 ]; then
+  for prefix in 'remember:' 'store:' "$(printf '\u8bb0\uff1a')" "$(printf '\u5b58\uff1a')"; do
+    BEFORE="$(calls_n)"
+    out=$(run UserPromptSubmit "$prefix durable fixture fact" "$CFG_SPY")
+    check "prefix pending ($prefix)" "$out" "has:Nothing was written"
+    check "prefix zero engine calls ($prefix)" "$( [ "$(calls_n)" = "$BEFORE" ] && echo SAME || echo CALLED )" "has:SAME"
+  done
   N1="$(calls_n)"
   out=$(run UserPromptSubmit "api_key = $SYN_SECRET please store" "$CFG_SPY")
   check "a suspected credential is not sent to the engine" "$out" "has:contains a credential"
@@ -391,36 +377,11 @@ import sys,importlib.util
 spec=importlib.util.spec_from_file_location("r","'"$ROOTM"'/hooks/respire.py"); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 print("OK" if len(m.extract_title("\u9ed8"*200))<=70 else "BAD")')" "has:OK"
 
-# ---- Write probe (enabled explicitly with --store; writes the real store, asserts, then forgets) --
+# ---- Legacy --store option: prefixes now always hand placement to the model. ----
 if [ "$WITH_STORE" = 1 ]; then
-  # The content must be semantically unrelated to the whole store: a purely random meaningless string (domain words like "probe/test/memory" collide at 30%+ similarity and go pending).
-  MARK="zq$(date +%s)$RANDOM kw7f2 random meaningless marker"
-  out=$(run UserPromptSubmit "$STORE_TRIGGER$MARK")
-  if printf '%s' "$out" | grep -qF "store pending"; then
-    # The live dedup gate may also send a random string to pending (store dependent) -- the ok path is covered by the CI stub suite, so this is recorded as SKIP
-    PASS=$((PASS+1)); echo "SKIP  random string judged a dedup pending (the live store's dedup gate tightened; the ok receipt path is covered by the CI stub)"
-  else
-    check "store success receipt" "$out" "has:Saved:"
-    check "receipt asks the AI to extract a fact sentence and retitle" "$out" "has:rsrs retitle"
-    SID=$(printf '%s' "$out" | sed -n 's/.*(\([0-9a-f]\{8\}\))\..*/\1/p')
-    check "receipt carries a short id" "$SID" "nonempty"
-    if [ -n "$SID" ]; then
-      rc=$(rsrs forget "$SID" --json 2>/dev/null | jq -r '.status // "err"')
-      check "probe cleanup (status=ok)" "$rc" "has:ok"
-    fi
-  fi
-  # Dedup pending: restating a stable store entry (title 97251289) must collide with high similarity -> pending, not written.
-  out=$(run UserPromptSubmit "$STORE_TRIGGER$DEDUP_PROMPT")
-  check "dedup pending restates candidates" "$out" "has:store pending"
-  check "pending lists candidates and the decision method" "$out" "has:--force"
-  # Fallback: if it was judged a direct write after all (store changed), clean up the probe.
-  if printf '%s' "$out" | grep -qF "Saved:"; then
-    BID=$(printf '%s' "$out" | sed -n 's/.*(\([0-9a-f]\{8\}\))\..*/\1/p')
-    [ -n "$BID" ] && rsrs forget "$BID" --json >/dev/null 2>&1
-    echo "  (note: it was judged a direct write rather than pending; cleaned up $BID as a fallback)"
-  fi
-else
-  echo "SKIP  write probe (read-only by default; add --store to write the real store and auto-forget)"
+  out=$(run UserPromptSubmit "remember: prefix handoff probe")
+  check "prefix probe does not write" "$out" "has:Nothing was written"
+  check "prefix probe requires read parent" "$out" "has:ONLY AFTER reading the full body"
 fi
 
 echo "----"

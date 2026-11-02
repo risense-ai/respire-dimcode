@@ -60,7 +60,14 @@ def audit(event, args):
         raise SystemExit(92)
 sys.addaudithook(audit)
 sys.argv = [os.environ['TEST_HOOK'], os.environ['TEST_EVENT']]
-runpy.run_path(sys.argv[0], run_name='__main__')
+# Test-only helper dispatch; StoreReceipt is not a host hook event.
+if os.environ['TEST_EVENT'] == 'StoreReceipt':
+    hook = runpy.run_path(sys.argv[0])
+    payload = json.load(sys.stdin)
+    content = payload['prompt'].replace('：', ':', 1).split(':', 1)[1].strip()
+    print(hook['do_store'](expected, content, config, payload.get('session_id', '')))
+else:
+    runpy.run_path(sys.argv[0], run_name='__main__')
 '''
 
 
@@ -204,7 +211,7 @@ else: sys.exit(1)
             args_seq = []   # review 6: Stop does not query the engine at all (zero-call sequence)
         elif event == 'SessionStart':
             args_seq = [['status','--json']]
-        elif prompt.startswith(('\u8bb0\uff1a','store:')):
+        elif event == 'StoreReceipt':
             content = prompt.replace('：',':',1).split(':',1)[1].strip()
             argv = ['remember',content,'--title',content,'--importance','important','--json']
             if mode in ('ok','show_fail','show_mismatch','show_wrongid','show_tail','show_badarr','show_badstr','show_numcontent','show_noentryid'):
@@ -215,6 +222,8 @@ else: sys.exit(1)
                 args_seq = [argv, ['list','--limit','3','--json']]
             else:                     # pending / hang / skip_status / slow_garbage: no further engine call
                 args_seq = [argv]
+        elif re.match(r'^(?:\u8bb0|\u5b58|\u8bb0\u5f55|\u8bb0\u4f4f|remember|store)\s*[:\uff1a]', prompt, re.I):
+            args_seq = []
         else:
             args_seq = [['recall',prompt,'--limit','5','--titles','--json']]
         env = dict(self.env, TEST_EXPECTED_ARGV=json.dumps([[str(self.engine)] + a for a in args_seq]),
@@ -290,17 +299,26 @@ else: sys.exit(1)
         self.assertNotIn('not signed in', out)
         self.assertEqual([args[0] for args in self.recorded()], ['status'])
 
-    def test_explicit_store_receipt_comes_from_stub(self):
-        out = self.call('store: durable fixture fact')
-        self.assertIn('respire · stored', out)
-        self.assertIn('retitle dddddddd', out)
-        self.assertIn('verified by read-back', out)
-        self.assertEqual([args[0] for args in self.recorded()], ['remember', 'show'])
+    def test_explicit_store_prefix_hands_off_without_writes(self):
+        for prefix in ('store:', 'remember:', '\u8bb0\uff1a', '\u5b58\uff1a', '\u8bb0\u5f55\uff1a', '\u8bb0\u4f4f\uff1a'):
+            out = self.call(prefix + ' durable fixture fact')
+            self.assertIn('store pending', out)
+            self.assertIn('Nothing was written', out)
+            self.assertIn('rsrs prompt', out)
+            self.assertIn('rsrs show <id> --json', out)
+            self.assertIn('update > merge > attach > new', out)
+            self.assertIn('DO NOT retry automatically or claim success', out)
+            self.assertIn('read-only, paused', out.lower())
+            self.assertIn('ONLY AFTER reading the full body', out)
+            self.assertIn('DO NOT guess', out)
+            self.assertIn('downgrade', out)
+            self.assertIn('DO NOT execute engineering tasks', out)
+        self.assertEqual(self.recorded(), [])
 
     def test_store_warn_is_written_not_refused(self):
-# CLI contract: status=warn with a valid id = committed with warnings (e.g. unresolved parent) --
-# never misreport "not accepted" and never prompt a resend (duplicate-write risk)
-        out = self.call('store: durable fixture fact', mode='warn')
+        # CLI contract: status=warn with a valid id means committed with warnings (e.g. unresolved parent) --
+        # never report "not accepted" and never prompt a resend (duplicate-write risk)
+        out = self.call('store: durable fixture fact', event='StoreReceipt', mode='warn')
         self.assertIn('Saved with warnings', out)
         self.assertIn('parent (cause) cannot be resolved', out)
         self.assertIn('retitle eeeeeeee', out)
@@ -308,8 +326,8 @@ else: sys.exit(1)
         self.assertEqual([args[0] for args in self.recorded()], ['remember', 'show'])
 
     def test_store_pending_relays_candidates_and_actions(self):
-# 7.2: pending keeps the candidates (with short ids) and the engine-suggested actions (update > merge > attach > store), never reduced to parent/force
-        out = self.call('store: durable fixture fact', mode='pending')
+        # §7.2: pending keeps the candidates (with short ids) and the engine-suggested actions (update > merge > attach > store), never reduced to parent/force
+        out = self.call('store: durable fixture fact', event='StoreReceipt', mode='pending')
         self.assertIn('store pending', out)
         self.assertIn('nothing was written', out)
         self.assertIn('[aaaabbbb]', out)
@@ -320,16 +338,16 @@ else: sys.exit(1)
         self.assertEqual([args[0] for args in self.recorded()], ['remember'])
 
     def test_store_readback_states(self):
-# R11 post-write verification: verified / mismatch / unavailable all reported honestly in the receipt
-        self.assertIn('verified by read-back', self.call('store: durable fixture fact'))
+        # R11 post-write verification: verified / mismatch / unavailable are all reported honestly in the receipt
+        self.assertIn('verified by read-back', self.call('store: durable fixture fact', event='StoreReceipt'))
         self.assertIn('DIFFERENT title/content',
-                      self.call('store: durable fixture fact', mode='show_mismatch'))
+                      self.call('store: durable fixture fact', event='StoreReceipt', mode='show_mismatch'))
         self.assertIn('Read-back unavailable',
-                      self.call('store: durable fixture fact', mode='show_fail'))
+                      self.call('store: durable fixture fact', event='StoreReceipt', mode='show_fail'))
 
     def test_store_unknown_receipt_never_demands_resend(self):
-# R10: bad receipt = unknown result -> read-only verification; never a definite failure, never prompt a resend
-        out = self.call('store: durable fixture fact', mode='silent')
+        # R10: bad receipt = unknown result -> read-only verification; never a definite failure, never prompt a resend
+        out = self.call('store: durable fixture fact', event='StoreReceipt', mode='silent')
         self.assertIn('store unknown', out)
         self.assertIn('Do NOT resend', out)
         self.assertIn('rsrs list --limit 3', out)
@@ -339,7 +357,7 @@ else: sys.exit(1)
     def test_store_timeout_is_unknown_and_makes_no_further_calls(self):
 # timeout = unknown result: the receipt allows read-only verification only and sends no further engine call (budget exhausted)
         before = self.recorded()
-        out = self.call('store: durable fixture fact', mode='hang', fast=True)
+        out = self.call('store: durable fixture fact', event='StoreReceipt', mode='hang', fast=True)
         self.assertIn('store unknown', out)
         self.assertIn('timed out', out)
         self.assertIn('Do NOT resend', out)
@@ -537,15 +555,15 @@ else: sys.exit(1)
     def test_strict_envelope_id_and_schema(self):
 # round three item 2: numeric id 12345678 and "a-------" (loose hex-hyphen) -> unknown, not Saved
         for mode_key, stub_mode in (('numid', 'ok_numid'), ('dashid', 'ok_dashid')):
-            out = self.call('store: strict fact', mode=stub_mode)
+            out = self.call('store: strict fact', event='StoreReceipt', mode=stub_mode)
             self.assertIn('store unknown', out, mode_key)
             self.assertNotIn('Saved', out, mode_key)
             self.assertIn('Do NOT resend', out, mode_key)
-# read-back three-way id identity plus native strings: summary correct but entry.id wrong/missing -> mismatch
-        out = self.call('store: strict fact ok', mode='show_wrongid')
+        # Read-back three-way id identity plus native strings: summary ok but entry.id wrong/missing -> mismatch
+        out = self.call('store: strict fact ok', event='StoreReceipt', mode='show_wrongid')
         self.assertIn('DIFFERENT', out)
         self.assertNotIn('verified by read-back', out)
-        out = self.call('store: strict fact num', mode='show_numcontent')
+        out = self.call('store: strict fact num', event='StoreReceipt', mode='show_numcontent')
         self.assertIn('DIFFERENT', out)
         self.assertNotIn('verified by read-back', out)
 
@@ -567,30 +585,30 @@ else: sys.exit(1)
 
     def test_receipt_edge_cases_are_unknown_not_failed(self):
         for mode in ('ok_noid', 'ok_junkid', 'bad_summary'):
-            out = self.call('store: edge fact', mode=mode)
+            out = self.call('store: edge fact', event='StoreReceipt', mode=mode)
             self.assertIn('store unknown', out, mode)
             self.assertIn('Do NOT resend', out, mode)
             self.assertNotIn('did not accept', out, mode)
             self.assertNotIn('Saved', out, mode)
-        out = self.call('store: edge fact', mode='skip_status')
+        out = self.call('store: edge fact', event='StoreReceipt', mode='skip_status')
         self.assertIn('not stored', out)
         self.assertIn('never force a write', out)
         self.assertNotIn('did not accept', out)
 
     def test_readback_full_verification(self):
-        out = self.call('store: full verify fact', mode='show_wrongid')
+        out = self.call('store: full verify fact', event='StoreReceipt', mode='show_wrongid')
         self.assertIn('Saved:', out)
         self.assertIn('DIFFERENT', out)
         self.assertNotIn('verified by read-back', out)
-        out = self.call('store: full verify fact tail', mode='show_tail')
+        out = self.call('store: full verify fact tail', event='StoreReceipt', mode='show_tail')
         self.assertIn('DIFFERENT', out)
         self.assertNotIn('verified by read-back', out)
-        out = self.call('store: full verify fact ok')
+        out = self.call('store: full verify fact ok', event='StoreReceipt')
         self.assertIn('verified by read-back', out)
 
     def test_slow_bad_receipt_respects_shared_budget(self):
         before = self.recorded()
-        out = self.call('store: slow garbage fact', mode='slow_garbage',
+        out = self.call('store: slow garbage fact', event='StoreReceipt', mode='slow_garbage',
                         extra_env={'RESPITE_HOOK_BUDGET_S': '4'})
         self.assertIn('store unknown', out)
         self.assertIn('Do NOT resend', out)
@@ -598,20 +616,20 @@ else: sys.exit(1)
 
     def test_verify_list_schema_failures_are_not_attribution(self):
         for mode in ('list_schema', 'list_notimes'):
-            out = self.call('store: schema fact', mode='silent', list_mode=mode)
+            out = self.call('store: schema fact', event='StoreReceipt', mode='silent', list_mode=mode)
             self.assertIn('store unknown', out, mode)
             self.assertNotIn('may already be written', out, mode)
     def test_stop_after_hook_store_does_not_query_engine(self):
-        self.call('store: durable fixture fact')
+        self.call('store: durable fixture fact', event='StoreReceipt')
         before = self.recorded()
         self.assertTrue(json.loads(self.call(event='Stop'))['decision'] == 'block')   # review 6: still nudges
         self.assertEqual(self.recorded(), before)   # zero engine queries
 
     def test_turn_receipt_suppression_is_request_scoped(self):
-# review 6: disk-receipt suppression cancelled -- Stop never suppresses from an old record; a second Stop for the same request is allowed by the latch
-        self.call('store: durable fixture fact')
-        self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')   # still nudges
-        self.assertEqual(self.call(event='Stop', active=True), '')                   # latch: once per request
+        # Review 6: disk-receipt suppression is cancelled -- Stop never suppresses from an old record; a second Stop for the same request is released by the latch
+        self.call('store: durable fixture fact', event='StoreReceipt')
+        self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')  # still nudges
+        self.assertEqual(self.call(event='Stop', active=True), '')                  # latch: once per request
         self.call('another ordinary input without storing')
         self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')
 
@@ -626,8 +644,8 @@ else: sys.exit(1)
         self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')
 
     def test_receipt_suppression_is_session_scoped(self):
-# session isolation: session A's write receipt does not suppress session B's nudge
-        self.call('store: durable fixture fact', session='a')
+        # Session isolation: a write receipt in session A does not suppress the nudge for session B
+        self.call('store: durable fixture fact', event='StoreReceipt', session='a')
         self.assertEqual(json.loads(self.call(event='Stop', session='b'))['decision'], 'block')
 
     def test_malformed_spy_cannot_pass_positive_control(self):
@@ -640,7 +658,7 @@ else: sys.exit(1)
 # a type error must never tear down the whole written receipt (losing Saved = treating committed data as unwritten)
         for mode in ('show_badarr', 'show_badstr'):
             before = self.recorded()
-            out = self.call('store: durable fixture fact', mode=mode)
+            out = self.call('store: durable fixture fact', event='StoreReceipt', mode=mode)
             self.assertIn('Saved:', out, mode)
             self.assertIn('Read-back unavailable', out, mode)
             self.assertNotIn('verified by read-back', out, mode)
@@ -651,7 +669,7 @@ else: sys.exit(1)
 # a tight budget (3s budget -> only 0.5s left on entry) must not wait the full STORE_T=18s window (pinned by an elapsed upper bound)
         before = self.recorded()
         started = time.monotonic()
-        out = self.call('store: tight budget fact', mode='hang',
+        out = self.call('store: tight budget fact', event='StoreReceipt', mode='hang',
                         extra_env={'RESPITE_HOOK_BUDGET_S': '3'})
         elapsed = time.monotonic() - started
         self.assertIn('store unknown', out)
@@ -662,7 +680,7 @@ else: sys.exit(1)
     def test_exhausted_budget_skips_remember_entirely(self):
 # round two #3: remaining budget <=0 on entry -> even remember is skipped (zero engine calls) and it goes straight to unknown
         before = self.recorded()
-        out = self.call('store: budget gone fact', extra_env={'RESPITE_HOOK_BUDGET_S': '2'})
+        out = self.call('store: budget gone fact', event='StoreReceipt', extra_env={'RESPITE_HOOK_BUDGET_S': '2'})
         self.assertIn('store unknown', out)
         self.assertIn('Do NOT resend', out)
         self.assertEqual(self.recorded(), before)

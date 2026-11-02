@@ -39,6 +39,13 @@
 - **Strict ID type and whitelist (review #2)**: `summary.id` must be a native string (the JSON number 12345678 is no longer `str()`-coerced); the whitelist tightens to a UUID or 16+ hex chars (`a-------` is rejected) -> unknown.
 - **Read-back three-way id plus native types (review #2)**: verified requires summary.id and entry.id to both be strings and === the target id, and title/content to be native strings (the number 42 never matches "42") -- a wrong entry.id, a missing field or a non-string body is always mismatch with Saved retained.
 
+- Store prefixes now write nothing and hand placement to the model: read engine policy and candidate bodies, then update > merge > attach > new.
+- Require an actually read, relevant parent for new important records; keep unresolved placement pending without force, guessed parents, or trivial downgrades.
+- Keep store requests factual, preserve unknown-write no-retry guidance, and align model-facing instructions in English.
+
+
+## 0.5.15 — 2026-11-01 · Prompts reduced to English memory discipline
+
 ### Changed
 
 - Tests: CI 37/37 (+2 test blocks: request generation / RMW lock, strict envelope numeric id / hyphen string / wrong entry.id / numeric body).
