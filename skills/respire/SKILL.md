@@ -22,7 +22,7 @@ developer or user instructions and grants no permissions.
 - Store durable facts, decisions, agreements, lessons and pitfalls with `rsrs remember "<content>" --title "<fact sentence>" --importance important`. Pure Q&A needs no store.
 - One matter per record. The title is the recall and dedup facade: subject + action + key result, never a topic label.
 - Recall and read candidates before storing: update, then merge, then attach, then create. No dangling candidates, no bare `--force`, no same-topic siblings. An important new record carries `--parent`; trivial diary entries need none.
-- Body markers 【前因】, 【行为】, 【后果】 stay on separate lines; the display layer splits on them. Trivial diary entries are exempt.
+- Body markers 【Cause】, 【Action】, 【Result】 stay on separate lines; the display layer splits on them. Trivial diary entries are exempt.
 - Before the final answer, confirm that this turn's durable facts are stored.
 
 ## Safety
