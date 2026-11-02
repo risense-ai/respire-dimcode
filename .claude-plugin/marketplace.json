@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "respire",
-      "version": "0.5.17",
+      "version": "0.5.18",
       "source": "./",
       "description": "respire memory for Dim: title-tier recall every round, prefix-requested storage, model-optional degradation."
     }
