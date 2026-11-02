@@ -90,8 +90,8 @@ if manifest:
 hooks_cfg = parse_json("hooks/hooks.json")
 if hooks_cfg:
     events = hooks_cfg.get("hooks") or {}
-    if set(events) - {"SessionStart", "UserPromptSubmit", "Stop"}:
-        fail(f"unexpected events: {sorted(set(events) - {'SessionStart', 'UserPromptSubmit'})}")
+    if set(events) != {"SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"}:
+        fail("hooks must include exactly SessionStart/UserPromptSubmit/PreToolUse/Stop")
     else:
         ok("hook events subset")
     for ev, groups in events.items():
