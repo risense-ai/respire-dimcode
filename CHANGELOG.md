@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.16 — 2026-11-02
+
+- Store prefixes now write nothing and hand placement to the model: read engine policy and candidate bodies, then update > merge > attach > new.
+- Require an actually read, relevant parent for new important records; keep unresolved placement pending without force, guessed parents, or trivial downgrades.
+- Keep store requests factual, preserve unknown-write no-retry guidance, and align model-facing instructions in English.
+
+
 ## 0.5.15 — 2026-11-01 · 提示词精简为纯英文记忆纪律
 
 ### Changed

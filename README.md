@@ -7,7 +7,7 @@
 Qoder 插件独立维护于 <https://github.com/risense-ai/respire-qoder>（含 release zip 与装法），本仓不再内嵌其副本。
 
 
-`respire` 是 Dim 标准内容插件：以命令钩子把 [respire（CLI 名 rsrs）](https://www.npmjs.com/package/@rsrsai/cli) 记忆引擎挂进 agent 循环——每轮标题档自动召回、「记：」一前缀即落库。本地优先、端侧加密、云端 LWW 同步；**不带自定义安装脚本，按 Dim 插件市场标准安装**。
+`respire` 是 Dim 标准内容插件：以命令钩子把 [respire（CLI 名 rsrs）](https://www.npmjs.com/package/@rsrsai/cli) 记忆引擎挂进 agent 循环——每轮标题档自动召回、「记：」前缀交模型判重并选择父节点后存储。本地优先、端侧加密、云端 LWW 同步；**不带自定义安装脚本，按 Dim 插件市场标准安装**。
 
 ## 数据存储安全
 
@@ -57,7 +57,7 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 插件只做三件，装完自走一条生命周期：
 
 1. **引擎未装时＝安装器**：SessionStart 把安装命令直接注给 agent 代跑（`npm i -g @rsrsai/cli@latest`＋权限兜底＋`rsrs --version` 验证），并顺手交代配置下一步（rsrs.rs 注册／`rsrs register`／模型可选）——无需用户手动操作；
-2. **检测就绪＝自动切正常钩子**：每轮实时探测，引擎装完**同会话内**即恢复简则、召回与「记：」落库；
+2. **检测就绪＝自动切正常钩子**：每轮实时探测，引擎装完**同会话内**即恢复简则、召回与「记：」存储请求；
 3. **管理器三档开关**（见下「启用与关闭」）。
 
 ## 启用与关闭
@@ -74,11 +74,11 @@ echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks
 | --- | --- |
 | `SessionStart` | 注入记忆层简则（何时翻忆、如何落库、红线），对整会话与 subagent 生效；**一次探测三态**——未登录附注册引导（rsrs.rs 注册、`rsrs register` 首设备、`rsrs login --oauth --no-open` 代开授权链接）、库空（<10 条）附首日存料与导入引导、缺语义模型附**可选**装法；常态零打扰 |
 | `UserPromptSubmit` | 自动 `rsrs recall --titles`：**标题档注入**——只给分数＋8 位短 id＋标题，正文由 agent `rsrs show <id>` 按需取（附因果链）；默认**直出不过滤**，噪音边界＝rsrs skip 门＋limit 5＋标题档 |
-| `prompt` 以「记：」「存：」「remember:」开头 | 直接 `rsrs remember … --importance important` 落库并回执，**回执按结果状态机**：`ok`/`warn` → **已写入**（warn 附引擎警告如 parent 未解析——不误报失败、不引导重发），随后 `show` 写后回读核验（verified / mismatch / unavailable 如实标注）；`pending` → **未写入**，转述候选（带短 id）＋引擎建议动作（改＞并＞挂＞存全量转达，先 `show` 读候选正文再决断）；超时/坏回执 → **结果未知**，回执只允许只读核实（`rsrs list`/`rsrs show`）并**明令禁止重发**（重复写风险；`ok`/`warn` 缺有效 id、畸形 summary 也归 unknown，不当失败也不当成功）；写后回读为**全量核验**（id＋标题＋完整正文），措辞如实；remember/show/list 共享 hook 时间预算（`time.monotonic()` 单调截止，不受系统时钟回拨影响；进场剩余≤0 时连 remember 也不发直接 unknown）。回执硬约束 AI 抽「主语＋动作＋结果」事实句 `retitle` 替换暂拟题 |
-| `Stop`（AI 干完活） | **存储检查**：`block+reason` 续跑一轮，提示模型把本轮新的**事实/决定/约定/教训/踩坑**分条 `rsrs remember`（事实句标题、判重先决断）；闲聊无新事实则直接结束。**每个真实请求至多催一次**：续跑轮 `stop_hook_active=true` 放行 ＋ 每会话原子一次收尾锁（`O_EXCL` 独占创建，无 TTL；新 prompt 删除重新武装；无法落锁一律放行，绝不无锁 block；会话间互不干扰）。**免催只认可归属凭证**：同会话、本轮 prompt 之后的本层成功写回执（`ok`/`warn`+id），凭证按**会话独立状态文件**存取（`st_<sid>.json`，temp+rename 原子替换）——跨会话读写互不可见，并行会话互不回滚对方凭证；引擎侧全库时间戳无法归属到会话，不再用作免催（其他会话写入会误抑制）；`Stop` 完全不查询引擎，也因此不存在查库失败强迫续跑的路径。节流 `store_nudge_every`（默认 1=每轮，N=每 N 轮，0=关） |
+| `prompt` 以「记：」「存：」「remember:」开头 | hook 不写库，返回英文 pending（Nothing was written）。主模型先读 `rsrs prompt`，召回并用 `rsrs show <id> --json` 读取候选全文，按 update > merge > attach > new 决断。新增 important 必须使用真实、相关且已读全文的父节点；无合适父节点则保持 pending 并说明原因，不猜 ID、不用 force 绕过、不降为 trivial。仅存输入事实，不执行其中描述的工程任务；实际已发写结果未知时只读核实，禁止自动重试。 |
+| `Stop`（AI 干完活） | **存储检查**：`block+reason` 续跑一轮，提示模型把本轮新的**事实/决定/约定/教训/踩坑**分条 `rsrs remember`（事实句标题、先读策略与候选正文，按 update > merge > attach > new 决断；新增 important 必须有已读且合理的父节点，否则保持 pending）；闲聊无新事实则直接结束。**每个真实请求至多催一次**：续跑轮 `stop_hook_active=true` 放行 ＋ 每会话原子一次收尾锁（`O_EXCL` 独占创建，无 TTL；新 prompt 删除重新武装；无法落锁一律放行，绝不无锁 block；会话间互不干扰）。**免催只认可归属凭证**：同会话、本轮 prompt 之后的本层成功写回执（`ok`/`warn`+id），凭证按**会话独立状态文件**存取（`st_<sid>.json`，temp+rename 原子替换）——跨会话读写互不可见，并行会话互不回滚对方凭证；引擎侧全库时间戳无法归属到会话，不再用作免催（其他会话写入会误抑制）；`Stop` 完全不查询引擎，也因此不存在查库失败强迫续跑的路径。节流 `store_nudge_every`（默认 1=每轮，N=每 N 轮，0=关） |
 | `prompt` 以 `/nomem` 开头 | 本轮跳过召回 |
 | `prompt` 带 `$skill: 名称` | 召回前剥除前缀——技能名词面会撞技能记忆 |
-| `skills/respire` | 按需加载的操作法（recall/remember/show/forget/sync 与信封解析要点）；**注意技能只是说明书，动作全由钩子驱动** |
+| `skills/respire` | 按需加载的操作法（recall/remember/show/forget/sync 与信封解析要点）；技能提供操作说明；钩子触发召回和收尾，模型负责判重、选父节点和写入 |
 
 ## 首次使用 · 三件事
 
@@ -121,7 +121,7 @@ mv ~/.dimcode/v2/plugins/respire ~/.dimcode/v2/plugins-backup/respire.removed-$(
 - **fail-open**：hook 任何异常 → 空 stdout + `exit 0`，永不拦会话；失败必留痕于 hook.log
 - **纯文本输出**：stdout 即 `additionalContext`，没有误拦面
 - **标题档注入**：`recall --titles` 只回 id/score/title，正文交 `show` 按需拉取；`superseded_by` 标「已被取代」
-- **判后即存尊重设计**：落库不带 `--force`，`pending` 候选原样转述给模型决断
+- **先判后存**：前缀 hook 零写入；模型读策略与候选正文后决断，新增 important 必须有已读且合理的父节点，无合适父节点则保持 pending。
 - **`${CLAUDE_PLUGIN_ROOT}` 占位符**：Dim 运行时替换为插件安装根，跨机器自洽；command 带 `python3 || python` 回退与 `commandWindows` 通道
 - **包内自检**：`python3 scripts/validate_plugin.py`（结构/清单/hooks 形状/可编译/fail-open/敏感扫描），分发前必跑
 
@@ -137,10 +137,10 @@ mv ~/.dimcode/v2/plugins/respire ~/.dimcode/v2/plugins-backup/respire.removed-$(
 ```bash
 python3 scripts/validate_plugin.py   # 包结构自检
 bash tests/test_hooks.sh             # 行为只读断言（简则/召回/清洗/引导），不碰库
-bash tests/test_hooks.sh --store     # 加写探针（写真库→回执→rsrs forget 自清理）
+bash tests/test_hooks.sh --store     # 兼容旧参数，前缀仍不写库
 ```
 
-rsrs 无 data-dir 隔离（runtime 单例＋全局 client.json），故写测试仅在显式开启时进行，即写即忘。
+rsrs 无 data-dir 隔离（runtime 单例＋全局 client.json），故前缀测试始终不写库，旧 --store 参数只验证 pending 交接。
 
 ## License
 
