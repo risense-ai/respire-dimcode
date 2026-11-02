@@ -7,7 +7,7 @@
 The Qoder plugin is maintained separately at <https://github.com/risense-ai/respire-qoder> (with its release zip and install steps); this repo no longer bundles a copy.
 
 
-`respire` is a standard Dim content plugin: it wires the [respire memory engine (CLI name rsrs)](https://www.npmjs.com/package/@rsrsai/cli) into the agent loop through command hooks -- a title-tier auto-recall every turn and a store triggered by the store prefix. Local-first, device-side encryption, cloud LWW sync; **no custom install script, installed the standard Dim marketplace way**.
+`respire` is a standard Dim content plugin: it wires the [respire memory engine (CLI name rsrs)](https://www.npmjs.com/package/rsrs-cli) into the agent loop through command hooks -- a title-tier auto-recall every turn and a store triggered by the store prefix. Local-first, device-side encryption, cloud LWW sync; **no custom install script, installed the standard Dim marketplace way**.
 
 ## Data storage safety
 
@@ -39,7 +39,7 @@ dim plugin install respire@risense --overwrite
 
 > If you need to keep your `hooks/respire.config.json`, copy it back from the old directory; deleting it falls back to the new defaults (old default values are not migrated automatically).
 
-When the engine (rsrs CLI) is missing the plugin injects the install command into the session (`npm i -g @rsrsai/cli@latest`) so the agent can install it. **Takes effect in a new session.**
+When the engine (rsrs CLI) is missing the plugin injects the install command into the session (`npm i -g rsrs-cli@latest`) so the agent can install it. **Takes effect in a new session.**
 
 Install location: `~/.dimcode/v2/plugins/respire/` (CN distribution; Global uses `~/.dim/v2/plugins/` and source defaults to `~/.agents/plugins/` -- installation is a copy, so source changes require a reinstall).
 
@@ -56,7 +56,7 @@ Two things to know about Dim today (source verified): `dim` has **no** `plugin l
 
 The plugin does three things and then runs a lifecycle on its own:
 
-1. **Installer while the engine is missing**: SessionStart hands the install command to the agent to run (`npm i -g @rsrsai/cli@latest` plus permission fallbacks and an `rsrs --version` check) and also states the next configuration steps (rsrs.rs registration / `rsrs register` / optional model) -- no manual work for the user;
+1. **Installer while the engine is missing**: SessionStart hands the install command to the agent to run (`npm i -g rsrs-cli@latest` plus permission fallbacks and an `rsrs --version` check) and also states the next configuration steps (rsrs.rs registration / `rsrs register` / optional model) -- no manual work for the user;
 2. **Normal hooks once it is ready**: it probes every turn, and once the engine is installed the rules, recall and explicit stores resume **within the same session**;
 3. **A three-level manager switch** (see "Enable and disable" below).
 
