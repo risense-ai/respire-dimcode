@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # respire 自测 —— 模拟 stdin 事件 JSON，逐分支断言。
 # rsrs 无 data-dir 隔离（runtime 单例＋全局 client.json），故默认只读分支不碰库；
-# 加 --store 才跑写探针（写真库→回执断言→rsrs forget 自清理）。
+# --store is retained for compatibility; prefixes never write.
 set -u
 export MSYS2_ENV_CONV_EXCL='PROMPT_VAL'  # MSYS 连 env 值都会把「/nomem …」转成 Windows 路径——只豁免 prompt 变量
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -139,37 +139,17 @@ run_stub() {
 STOP_JSON='{"hook_event_name": "Stop", "stop_hook_active": false, "session_id": "selftest"}'
 reset_state() { rm -rf "$TMP/turnstate" "$TMP/nudge"; }
 
-# ---- 写回执状态机（§7.1/§7.2 契约；全走桩，零真库依赖） ----
+# ---- Store prefix: no write, model decides placement; receipt helpers are covered by test_ci.py. ----
 FACT="fixed stub fact sentence one."
 reset_state
-out=$(STUB_TITLE="$FACT" STUB_CONTENT="$FACT" run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"记：$FACT\", \"session_id\": \"selftest\"}" rem_ok)
-check "ok 写入回执含短 id" "$out" "含:(dddddddd)"
-check "ok 写入回读核验标注" "$out" "含:verified by read-back"
-check "ok 回执约束AI抽事实句retitle" "$out" "含:rsrs retitle dddddddd"
-out=$(STUB_TITLE="$FACT" STUB_CONTENT="$FACT" run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"记：$FACT\", \"session_id\": \"selftest\"}" rem_warn)
-check "warn 已写入不误报失败" "$out" "含:Saved with warnings"
-check "warn 回执附引擎警告摘要" "$out" "含:parent (cause) cannot be resolved"
-check "warn 不引导重发" "$out" "不含:did not accept"
-check "warn 仍给 retitle 精修入口" "$out" "含:retitle eeeeeeee"
-out=$(run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"记：$FACT\", \"session_id\": \"selftest\"}" rem_pend)
-check "pending 明示未写入" "$out" "含:nothing was written"
-check "pending 转述候选带短id" "$out" "含:[aaaabbbb]"
-check "pending 保留建议动作merge" "$out" "含:--merge-ids"
-check "pending 保留建议动作force" "$out" "含:--force"
-out=$(run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"记：$FACT\", \"session_id\": \"selftest\"}" rem_silent stale)
-check "坏回执归为unknown" "$out" "含:store unknown"
-check "unknown 只读核实指引" "$out" "含:rsrs list --limit 3"
-check "unknown 禁止重发" "$out" "含:Do NOT resend"
-check "unknown 不误报失败" "$out" "不含:did not accept"
-out=$(run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"记：$FACT\", \"session_id\": \"selftest\"}" rem_silent fresh)
-check "unknown+新条目报告可能已写" "$out" "含:may already be written"
-check "unknown+新条目给出只读id" "$out" "含:rsrs show ffffffff"
-out=$(run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"记：$FACT\", \"session_id\": \"selftest\"}" rem_slow)
-check "超时归为unknown" "$out" "含:store unknown"
-check "超时回执禁重发" "$out" "含:Do NOT resend"
-check "超时不引导手动重发remember" "$out" "不含:run rsrs remember manually"
-out=$(STUB_TITLE="$FACT" STUB_CONTENT="$FACT" run_stub UserPromptSubmit "{\"hook_event_name\": \"UserPromptSubmit\", \"prompt\": \"记：$FACT\", \"session_id\": \"selftest\"}" rem_showbad)
-check "回读不一致如实标注" "$out" "含:DIFFERENT title/content"
+for mode in rem_ok rem_warn rem_pend rem_silent rem_slow rem_showbad; do
+  out=$(run_stub UserPromptSubmit "{\"prompt\": \"remember: $FACT\", \"session_id\": \"selftest\"}" "$mode")
+  check "prefix pending ($mode)" "$out" "含:Nothing was written"
+  check "prefix reads policy ($mode)" "$out" "含:rsrs prompt"
+  check "prefix reads candidates ($mode)" "$out" "含:rsrs show <id> --json"
+  check "prefix placement order ($mode)" "$out" "含:update > merge > attach > new"
+  check "prefix has no success receipt ($mode)" "$out" "不含:Saved:"
+done
 
 # ---- Stop 存储检查（新契约：fail-open + 请求级凭证 + 一次收尾锁；每场景独立 reset 状态） ----
 STOP_JSON='{"hook_event_name": "Stop", "stop_hook_active": false, "session_id": "selftest"}'
@@ -348,6 +328,12 @@ grep -aqE '^recall( |$)' "$TMP/spy.log" 2>/dev/null || SPY_ALIVE=0
 printf '%s' "$spy_out" | grep -aqF "auto-recall" || SPY_ALIVE=0
 
 if [ "$SPY_ALIVE" = 1 ]; then
+  for prefix in 'remember:' 'store:' '记：' '存：'; do
+    BEFORE="$(calls_n)"
+    out=$(run UserPromptSubmit "$prefix durable fixture fact" "$CFG_SPY")
+    check "prefix pending ($prefix)" "$out" "含:Nothing was written"
+    check "prefix zero engine calls ($prefix)" "$( [ "$(calls_n)" = "$BEFORE" ] && echo SAME || echo CALLED )" "含:SAME"
+  done
   N1="$(calls_n)"
   out=$(run UserPromptSubmit "api_key = $SYN_SECRET 存一下" "$CFG_SPY")
   check "疑似凭据不发引擎" "$out" "含:contains a credential"
@@ -382,36 +368,11 @@ import sys,importlib.util
 spec=importlib.util.spec_from_file_location("r","'"$ROOTM"'/hooks/respire.py"); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 print(len(m.extract_title("默" * 200)))')" "非空"
 
-# ---- 写探针（--store 显式开启；写真库→断言→forget 清理） ----
+# ---- Legacy --store option: prefixes now always hand placement to the model. ----
 if [ "$WITH_STORE" = 1 ]; then
-  # 内容须与全库零语义关联：纯随机无义串（域词如「探针/测试/记忆」会撞 30%+ 相似走待决态）
-  MARK="zq$(date +%s)$RANDOM kw7f2 随机标记无义串"
-  out=$(run UserPromptSubmit "记：$MARK")
-  if printf '%s' "$out" | grep -qF "store pending"; then
-    # 实时库判重门对随机串也可能放pending（库况相关）——ok 路径改由 CI 桩套件保证，此处记 SKIP
-    PASS=$((PASS+1)); echo "SKIP  随机串判重待决（实时库判重门收紧，ok 回执路径由 CI 桩覆盖）"
-  else
-    check "落库成功回执" "$out" "含:Saved:"
-    check "回执约束AI抽事实句retitle" "$out" "含:rsrs retitle"
-    SID=$(printf '%s' "$out" | sed -n 's/.*(\([0-9a-f]\{8\}\))\..*/\1/p')
-    check "回执带短 id" "$SID" "非空"
-    if [ -n "$SID" ]; then
-      rc=$(rsrs forget "$SID" --json 2>/dev/null | jq -r '.status // "err"')
-      check "探针清理(status=ok)" "$rc" "含:ok"
-    fi
-  fi
-  # 判重待决：复述库中稳定条目（97251289 标题）→ 必撞高相似 → pending 未写入
-  out=$(run UserPromptSubmit "记：1memory 更名 respire：吸即存呼即取，材料全线改（复述既有条目触发判重待决）")
-  check "判重待决转述候选" "$out" "含:store pending"
-  check "待决列出候选与决断法" "$out" "含:--force"
-  # 兜底：万一判为直写（库条变更），清掉探针不留垃圾
-  if printf '%s' "$out" | grep -qF "Saved:"; then
-    BID=$(printf '%s' "$out" | sed -n 's/.*(\([0-9a-f]\{8\}\))\..*/\1/p')
-    [ -n "$BID" ] && rsrs forget "$BID" --json >/dev/null 2>&1
-    echo "  （注：该条被判直写而非待决，已兜底清理 $BID）"
-  fi
-else
-  echo "SKIP  写探针（默认只读；加 --store 开启，写真库并自动 forget 清理）"
+  out=$(run UserPromptSubmit "remember: prefix handoff probe")
+  check "prefix probe does not write" "$out" "含:Nothing was written"
+  check "prefix probe requires read parent" "$out" "含:ONLY AFTER reading the full body"
 fi
 
 echo "----"

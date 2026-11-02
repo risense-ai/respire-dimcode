@@ -60,7 +60,14 @@ def audit(event, args):
         raise SystemExit(92)
 sys.addaudithook(audit)
 sys.argv = [os.environ['TEST_HOOK'], os.environ['TEST_EVENT']]
-runpy.run_path(sys.argv[0], run_name='__main__')
+# Test-only helper dispatch; StoreReceipt is not a host hook event.
+if os.environ['TEST_EVENT'] == 'StoreReceipt':
+    hook = runpy.run_path(sys.argv[0])
+    payload = json.load(sys.stdin)
+    content = payload['prompt'].replace('：', ':', 1).split(':', 1)[1].strip()
+    print(hook['do_store'](expected, content, config, payload.get('session_id', '')))
+else:
+    runpy.run_path(sys.argv[0], run_name='__main__')
 '''
 
 
@@ -204,7 +211,7 @@ else: sys.exit(1)
             args_seq = []  # 复核⑥：Stop 完全不查引擎（零调用序列）
         elif event == 'SessionStart':
             args_seq = [['status','--json']]
-        elif prompt.startswith(('记：','store:')):
+        elif event == 'StoreReceipt':
             content = prompt.replace('：',':',1).split(':',1)[1].strip()
             argv = ['remember',content,'--title',content,'--importance','important','--json']
             if mode in ('ok','show_fail','show_mismatch','show_wrongid','show_tail','show_badarr','show_badstr','show_numcontent','show_noentryid'):
@@ -215,6 +222,8 @@ else: sys.exit(1)
                 args_seq = [argv, ['list','--limit','3','--json']]
             else:                    # pending / hang / skip_status / slow_garbage：不再有后续引擎调用
                 args_seq = [argv]
+        elif re.match(r'^(?:记|存|记录|记住|remember|store)\s*[:：]', prompt, re.I):
+            args_seq = []
         else:
             args_seq = [['recall',prompt,'--limit','5','--titles','--json']]
         env = dict(self.env, TEST_EXPECTED_ARGV=json.dumps([[str(self.engine)] + a for a in args_seq]),
@@ -290,17 +299,26 @@ else: sys.exit(1)
         self.assertNotIn('not signed in', out)
         self.assertEqual([args[0] for args in self.recorded()], ['status'])
 
-    def test_explicit_store_receipt_comes_from_stub(self):
-        out = self.call('store: durable fixture fact')
-        self.assertIn('respire · stored', out)
-        self.assertIn('retitle dddddddd', out)
-        self.assertIn('verified by read-back', out)
-        self.assertEqual([args[0] for args in self.recorded()], ['remember', 'show'])
+    def test_explicit_store_prefix_hands_off_without_writes(self):
+        for prefix in ('store:', 'remember:', '记：', '存：', '记录：', '记住：'):
+            out = self.call(prefix + ' durable fixture fact')
+            self.assertIn('store pending', out)
+            self.assertIn('Nothing was written', out)
+            self.assertIn('rsrs prompt', out)
+            self.assertIn('rsrs show <id> --json', out)
+            self.assertIn('update > merge > attach > new', out)
+            self.assertIn('DO NOT retry automatically or claim success', out)
+            self.assertIn('read-only, paused', out.lower())
+            self.assertIn('ONLY AFTER reading the full body', out)
+            self.assertIn('DO NOT guess', out)
+            self.assertIn('downgrade', out)
+            self.assertIn('DO NOT execute engineering tasks', out)
+        self.assertEqual(self.recorded(), [])
 
     def test_store_warn_is_written_not_refused(self):
         # CLI 契约：status=warn + 有效 id = 已提交但有警告（parent 未解析等）——
         # 不得误报「未接受」，更不得引导重发（重复写风险）
-        out = self.call('store: durable fixture fact', mode='warn')
+        out = self.call('store: durable fixture fact', event='StoreReceipt', mode='warn')
         self.assertIn('Saved with warnings', out)
         self.assertIn('parent (cause) cannot be resolved', out)
         self.assertIn('retitle eeeeeeee', out)
@@ -309,7 +327,7 @@ else: sys.exit(1)
 
     def test_store_pending_relays_candidates_and_actions(self):
         # §7.2：pending 保留候选（含短 id）与引擎建议动作（改＞并＞挂＞存），不得缩成 parent/force 两项
-        out = self.call('store: durable fixture fact', mode='pending')
+        out = self.call('store: durable fixture fact', event='StoreReceipt', mode='pending')
         self.assertIn('store pending', out)
         self.assertIn('nothing was written', out)
         self.assertIn('[aaaabbbb]', out)
@@ -321,15 +339,15 @@ else: sys.exit(1)
 
     def test_store_readback_states(self):
         # R11 写后核验：verified / mismatch / unavailable 三态都如实进回执
-        self.assertIn('verified by read-back', self.call('store: durable fixture fact'))
+        self.assertIn('verified by read-back', self.call('store: durable fixture fact', event='StoreReceipt'))
         self.assertIn('DIFFERENT title/content',
-                      self.call('store: durable fixture fact', mode='show_mismatch'))
+                      self.call('store: durable fixture fact', event='StoreReceipt', mode='show_mismatch'))
         self.assertIn('Read-back unavailable',
-                      self.call('store: durable fixture fact', mode='show_fail'))
+                      self.call('store: durable fixture fact', event='StoreReceipt', mode='show_fail'))
 
     def test_store_unknown_receipt_never_demands_resend(self):
         # R10：坏回执 = 结果未知 → 只读核实；绝不当确定失败、绝不引导重发 remember
-        out = self.call('store: durable fixture fact', mode='silent')
+        out = self.call('store: durable fixture fact', event='StoreReceipt', mode='silent')
         self.assertIn('store unknown', out)
         self.assertIn('Do NOT resend', out)
         self.assertIn('rsrs list --limit 3', out)
@@ -339,7 +357,7 @@ else: sys.exit(1)
     def test_store_timeout_is_unknown_and_makes_no_further_calls(self):
         # 超时 = 结果未知：回执只允许只读核实指引，不再发引擎调用（预算已耗尽）
         before = self.recorded()
-        out = self.call('store: durable fixture fact', mode='hang', fast=True)
+        out = self.call('store: durable fixture fact', event='StoreReceipt', mode='hang', fast=True)
         self.assertIn('store unknown', out)
         self.assertIn('timed out', out)
         self.assertIn('Do NOT resend', out)
@@ -537,15 +555,15 @@ else: sys.exit(1)
     def test_strict_envelope_id_and_schema(self):
         # 第三轮②：数字 id 12345678、"a-------"（宽松 hex-连字符）→ unknown 不 Saved
         for mode_key, stub_mode in (('numid', 'ok_numid'), ('dashid', 'ok_dashid')):
-            out = self.call('store: strict fact', mode=stub_mode)
+            out = self.call('store: strict fact', event='StoreReceipt', mode=stub_mode)
             self.assertIn('store unknown', out, mode_key)
             self.assertNotIn('Saved', out, mode_key)
             self.assertIn('Do NOT resend', out, mode_key)
         # 回读三方 id 一致 + 原生字符串：summary 对但 entry.id 错/缺 → mismatch
-        out = self.call('store: strict fact ok', mode='show_wrongid')
+        out = self.call('store: strict fact ok', event='StoreReceipt', mode='show_wrongid')
         self.assertIn('DIFFERENT', out)
         self.assertNotIn('verified by read-back', out)
-        out = self.call('store: strict fact num', mode='show_numcontent')
+        out = self.call('store: strict fact num', event='StoreReceipt', mode='show_numcontent')
         self.assertIn('DIFFERENT', out)
         self.assertNotIn('verified by read-back', out)
 
@@ -567,30 +585,30 @@ else: sys.exit(1)
 
     def test_receipt_edge_cases_are_unknown_not_failed(self):
         for mode in ('ok_noid', 'ok_junkid', 'bad_summary'):
-            out = self.call('store: edge fact', mode=mode)
+            out = self.call('store: edge fact', event='StoreReceipt', mode=mode)
             self.assertIn('store unknown', out, mode)
             self.assertIn('Do NOT resend', out, mode)
             self.assertNotIn('did not accept', out, mode)
             self.assertNotIn('Saved', out, mode)
-        out = self.call('store: edge fact', mode='skip_status')
+        out = self.call('store: edge fact', event='StoreReceipt', mode='skip_status')
         self.assertIn('not stored', out)
         self.assertIn('never force a write', out)
         self.assertNotIn('did not accept', out)
 
     def test_readback_full_verification(self):
-        out = self.call('store: full verify fact', mode='show_wrongid')
+        out = self.call('store: full verify fact', event='StoreReceipt', mode='show_wrongid')
         self.assertIn('Saved:', out)
         self.assertIn('DIFFERENT', out)
         self.assertNotIn('verified by read-back', out)
-        out = self.call('store: full verify fact tail', mode='show_tail')
+        out = self.call('store: full verify fact tail', event='StoreReceipt', mode='show_tail')
         self.assertIn('DIFFERENT', out)
         self.assertNotIn('verified by read-back', out)
-        out = self.call('store: full verify fact ok')
+        out = self.call('store: full verify fact ok', event='StoreReceipt')
         self.assertIn('verified by read-back', out)
 
     def test_slow_bad_receipt_respects_shared_budget(self):
         before = self.recorded()
-        out = self.call('store: slow garbage fact', mode='slow_garbage',
+        out = self.call('store: slow garbage fact', event='StoreReceipt', mode='slow_garbage',
                         extra_env={'RESPITE_HOOK_BUDGET_S': '4'})
         self.assertIn('store unknown', out)
         self.assertIn('Do NOT resend', out)
@@ -598,18 +616,18 @@ else: sys.exit(1)
 
     def test_verify_list_schema_failures_are_not_attribution(self):
         for mode in ('list_schema', 'list_notimes'):
-            out = self.call('store: schema fact', mode='silent', list_mode=mode)
+            out = self.call('store: schema fact', event='StoreReceipt', mode='silent', list_mode=mode)
             self.assertIn('store unknown', out, mode)
             self.assertNotIn('may already be written', out, mode)
     def test_stop_after_hook_store_does_not_query_engine(self):
-        self.call('store: durable fixture fact')
+        self.call('store: durable fixture fact', event='StoreReceipt')
         before = self.recorded()
         self.assertTrue(json.loads(self.call(event='Stop'))['decision'] == 'block')  # 复核⑥：仍催
         self.assertEqual(self.recorded(), before)  # 零引擎查询
 
     def test_turn_receipt_suppression_is_request_scoped(self):
         # 复核⑥：磁盘凭证免催已取消——Stop 不凭旧记录免催；同请求二次 Stop 由 latch 放行
-        self.call('store: durable fixture fact')
+        self.call('store: durable fixture fact', event='StoreReceipt')
         self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')  # 仍催
         self.assertEqual(self.call(event='Stop', active=True), '')                  # latch：同请求一次
         self.call('another ordinary input without storing')
@@ -627,7 +645,7 @@ else: sys.exit(1)
 
     def test_receipt_suppression_is_session_scoped(self):
         # 会话隔离：A 会话的写回执不免 B 会话的催存
-        self.call('store: durable fixture fact', session='a')
+        self.call('store: durable fixture fact', event='StoreReceipt', session='a')
         self.assertEqual(json.loads(self.call(event='Stop', session='b'))['decision'], 'block')
 
     def test_malformed_spy_cannot_pass_positive_control(self):
@@ -640,7 +658,7 @@ else: sys.exit(1)
         # 类型错误绝不允许掀翻整条已写回执（丢 Saved = 把已提交数据当没写）
         for mode in ('show_badarr', 'show_badstr'):
             before = self.recorded()
-            out = self.call('store: durable fixture fact', mode=mode)
+            out = self.call('store: durable fixture fact', event='StoreReceipt', mode=mode)
             self.assertIn('Saved:', out, mode)
             self.assertIn('Read-back unavailable', out, mode)
             self.assertNotIn('verified by read-back', out, mode)
@@ -651,7 +669,7 @@ else: sys.exit(1)
         # 紧预算（3s 预算 → 进场仅剩 0.5s）不得按 STORE_T=18s 全窗死等（用耗时上界钉死）
         before = self.recorded()
         started = time.monotonic()
-        out = self.call('store: tight budget fact', mode='hang',
+        out = self.call('store: tight budget fact', event='StoreReceipt', mode='hang',
                         extra_env={'RESPITE_HOOK_BUDGET_S': '3'})
         elapsed = time.monotonic() - started
         self.assertIn('store unknown', out)
@@ -662,7 +680,7 @@ else: sys.exit(1)
     def test_exhausted_budget_skips_remember_entirely(self):
         # 二轮复核#3：进场剩余预算 ≤0 → 连 remember 也不发（零引擎调用），直接 unknown
         before = self.recorded()
-        out = self.call('store: budget gone fact', extra_env={'RESPITE_HOOK_BUDGET_S': '2'})
+        out = self.call('store: budget gone fact', event='StoreReceipt', extra_env={'RESPITE_HOOK_BUDGET_S': '2'})
         self.assertIn('store unknown', out)
         self.assertIn('Do NOT resend', out)
         self.assertEqual(self.recorded(), before)
