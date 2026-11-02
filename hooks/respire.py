@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# respire —— respire(rsrs) × Dim agent 记忆插件（hook 端单入口）
-# 职责仅两件：安装到位（install.sh 负责）＋ 注入 dim hook（本脚本）。不碰登录、不碰账号配置。
-# 用法: python3 respire.py <SessionStart|UserPromptSubmit>   （事件 JSON 走 stdin）
-# 铁律: fail-open —— 任何异常 → 空 stdout、exit 0（协议里即「无决策、放行」），绝不 exit 2。
-#       查询类失败（Stop 的 list）同样放行：记忆层故障不得强迫主任务续跑。
+# respire -- respire(rsrs) x Dim agent memory plugin (single hook entry point)
+# It does exactly two things: install in place (install.sh does that) and inject the dim hook (this script). It never touches login or account config.
+# Usage: python3 respire.py <SessionStart|UserPromptSubmit>   (event JSON on stdin)
+# Iron rule: fail-open -- any exception -> empty stdout, exit 0 (i.e. "no decision, allow"), never exit 2.
+#       Query failures (Stop's list) allow as well: a memory-layer fault must never force the main task to keep running.
 from __future__ import annotations
 
 import datetime
@@ -17,42 +17,44 @@ import time
 
 VERSION = "0.5.16"
 
-# 超时窗（秒）：须盖住 rsrs runtime 冷启动（实测 doctor 模型加载 7s+），否则首轮静默、热后即灵
+# Timeout windows (seconds): must cover the rsrs runtime cold start (doctor model load measured at 7s+), otherwise the first turn is silent and only later turns work.
 RECALL_T = 14
 PROBE_T = 10
 STORE_T = 18
-LIST_T = 6    # Stop 查「最近一条落库时间」的窗口（实测 list ~0.9s，热后即回）
-SHOW_T = 8    # 写后回读（show）窗口；实际用时按 hook 预算自适应收缩
-LOG_MAX = 256 * 1024  # hook.log 超此整文件清轮
+LIST_T = 6    # window for Stop's "most recent store time" query (list measured ~0.9s warm)
+SHOW_T = 8    # post-write read-back (show) window; shrinks to the remaining hook budget
+LOG_MAX = 256 * 1024  # clear the whole hook.log once it exceeds this size
 
-if os.environ.get("RESPITE_TEST_FAST") == "1":   # 测试后门：把全部超时压到秒级（同族 RESPITE_FAKE_*）
+if os.environ.get("RESPITE_TEST_FAST") == "1":   # test backdoor: collapse all timeouts to seconds
     RECALL_T = PROBE_T = STORE_T = SHOW_T = 2
     LIST_T = 1
 
 DEFAULTS = {
-    "rsrs": "",                 # respire 引擎（rsrs）路径；空 = 自动探测
-    "recall_threshold": 0.0,    # 召回下限，0=默认关（rsrs 直出）：skip 门管无关、limit 限流、标题档廉价；设正数才启用过滤
-    "recall_limit": 5,          # 取前 N 条
-    "min_prompt_chars": 2,      # 过短不检索（1 字才跳；2 字起即查，rsrs 自带 skip 门、本地 100–400ms）
-    "session_rules": True,      # SessionStart 是否注入用法简则
-    "budget_chars": 1500,       # 单轮注入总字数预算
-    "log": True,                # hook.log 轻量留痕（每事件一行，复盘时灵时不灵的抓手）
-    "enabled": True,           # 总开关：false=记忆层全线静默（Dim 插件页亦可逐组件关 hook）
-    "store_nudge_every": 1,     # Stop 存储检查节流：1=每轮、N=每 N 轮一次、0=关闭（每轮=多一轮模型小调用）
+    "rsrs": "",                 # respire engine (rsrs) path; empty = auto-detect
+    "recall_threshold": 0.0,    # recall floor, 0 = off by default (rsrs raw output): the built-in skip gate handles irrelevance, limit caps volume, title tier is cheap
+    "recall_limit": 5,          # keep the first N hits
+    "min_prompt_chars": 2,      # skip retrieval for very short prompts (1 char is skipped, 2 chars triggers; rsrs has its own skip gate, local 100-400ms)
+    "session_rules": True,      # inject the usage rules on SessionStart
+    "budget_chars": 1500,       # total injection budget per turn
+    "log": True,                # lightweight hook.log trail (one line per event)
+    "enabled": True,           # master switch: false = whole memory layer silent
+    "store_nudge_every": 1,     # Stop store-check throttle: 1 = every turn, N = every Nth, 0 = off
 }
 
-# Explicit store prefixes hand placement to the model; the hook writes nothing.
-STORE_PREFIX = re.compile(r"^(?:记|存|记录|记住|remember|store)\s*[:：]\s*", re.I)
-# 本轮跳过召回
+# Explicit store prefix: a prompt starting with the store trigger goes straight to the engine.
+STORE_PREFIX = re.compile(
+    "^(?:\u8bb0|\u5b58|\u8bb0\u5f55|\u8bb0\u4f4f|remember|store)\\s*[:\uff1a]\\s*", re.I)
+# Skip recall for this turn
 SKIP_PREFIX = re.compile(r"^(?:/nomem|#nomem)\b")
-# Dim 技能指认前缀：$skill: 名称 后才是真任务——技能名会词面污染召回 query，须剥掉
+# Dim skill prefix: only the part after "$skill: name" is the real task -- the skill name pollutes the recall query lexically, so strip it.
 SKILL_PREFIX = re.compile(r"^\$\s*skill\s*:\s*\S+\s*", re.I)
-# 疑似凭据扫描：命中则该条 prompt 不发引擎（不召回也不落库）——与 codex/pi/dsh 侧同一正则口径
+# Credential scan: a hit means the prompt is not sent to the engine (no recall, no store) -- same regex as the codex/pi/dsh side.
 SECRET_RE = re.compile(
     r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----"
     r"|\b(?:sk-|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{12,}"
     r"|\bBearer\s+[A-Za-z0-9._~+/-]{12,}"
-    r"|(?:password|passwd|api[_ -]?key|token|secret|密码|口令|私钥)\s*[:=：]\s*\S+",
+    "|(?:password|passwd|api[_ -]?key|token|secret|"
+    "\u5bc6\u7801|\u53e3\u4ee4|\u79c1\u94a5)\\s*[:=\uff1a]\\s*\\S+",
     re.I)
 
 
@@ -79,15 +81,16 @@ To register, run rsrs register on this machine — the user sets the login passw
 
 
 _REDACT = [
-    (re.compile(r"(?i)(password|passwd|pwd|密码|口令)\s*[:=：]\s*\S+"), r"\1=[REDACTED]"),
+    (re.compile("(?i)(password|passwd|pwd|\u5bc6\u7801|\u53e3\u4ee4)\\s*[:=\uff1a]\\s*\\S+"),
+     r"\1=[REDACTED]"),
     (re.compile(r"\b(sk|ghp|gho|github_pat|AKIA|xox)[A-Za-z0-9_-]{8,}\b"), "[REDACTED]"),
     (re.compile(r"\b\d{11,19}\b"), "[NUM]"),
 ]
 
 
 def redact(s: str) -> str:
-    """日志脱敏：口令式赋值、token 前缀、11-19 位长数字（手机/卡号）。
-    日志只用于诊断，绝不落明文凭据。"""
+    """Log redaction: password-style assignments, token prefixes, 11-19 digit numbers
+    (phone/card). Logs are for diagnostics only; never write a plaintext credential."""
     try:
         for pat, rep in _REDACT:
             s = pat.sub(rep, s)
@@ -97,8 +100,8 @@ def redact(s: str) -> str:
 
 
 def log_event(cfg: dict, event: str, outcome: str, detail: str = "", ms=None):
-    """轻量留痕：hook.log 单行 JSONL、超 256KB 整文件清轮；日志失败绝不影响主链。
-    config log:false 关闭。字段：ts/ev/out/ms（耗时毫秒）/d（摘要）。"""
+    """Lightweight trail: one JSONL line in hook.log, whole-file clear above 256KB; a logging failure never affects the main path.
+    Turned off by config log:false. Fields: ts/ev/out/ms (milliseconds)/d (summary)."""
     if not cfg.get("log", True):
         return
     try:
@@ -139,7 +142,7 @@ def load_config() -> dict:
                 if key in doc and _typed(doc[key], ref):
                     cfg[key] = doc[key]
     except Exception:
-        pass  # 配置缺失/损坏 → 用默认值，绝不拦
+        pass  # missing/broken config -> defaults, never block
     return cfg
 
 
@@ -155,43 +158,43 @@ def find_rsrs(cfg: dict):
 
 
 def run_rsrs(bin_path: str, args: list, timeout: int):
-    # rsrs 的 --json 模式下进度写 stderr，capture 须分离，只解析 stdout
+    # In --json mode rsrs writes progress to stderr, so capture separately and parse stdout only.
     return subprocess.run([bin_path] + args, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def extract_title(content: str) -> str:
-    """无 LLM 下尽量抽完整事实句：整句优先 → 退到分隔符 → 绝不在词中硬截（上限 70 字）。
-    引擎不代抽题（retitle --title 必填），抽毕由回执引导 agent 用 retitle 精修。"""
+    """Without an LLM, get as close to a complete fact sentence as possible: whole sentence first -> fall back to a separator -> never cut mid-word (cap 70 chars).
+    The engine does not title for us (retitle --title is required); the receipt tells the agent to refine it with retitle."""
     s = re.sub(r"\s+", " ", content.strip())
     if not s:
         return ""
-    m = re.match(r"^(.{6,}?[。！？!?])", s)          # 第一个 ≥6 字的完整句
+    m = re.match("^(.{6,}?[\u3002\uff01\uff1f!?])", s)          # first complete sentence of >= 6 chars (CJK and ASCII terminators)
     if m:
         return m.group(1)[:70].strip()
     head = s[:70]
-    cuts = [head.rfind(c) for c in "，；、,;"]        # 退到分隔符，不切半词
+    cuts = [head.rfind(c) for c in "\uff0c\uff1b\u3001,;"]   # fall back to a separator, never split a word
     cut = max(cuts)
     if cut >= 20:
-        return head[:cut + 1].rstrip("，,；; ").strip()
-    return head                                       # 无标点长串才落到 70 字上界
+        return head[:cut + 1].rstrip("\uff0c,\uff1b; ").strip()
+    return head                                            # punctuation-free run: cap at 70 chars
 
 
-TURN_FRESH_S = 1800  # 本轮写回执的新鲜度上限：超窗视为陈旧，不再据此免催
-# 一次收尾锁（复核整改）：每会话独立锁文件，O_CREAT|O_EXCL 原子独占——并发 Stop 只有一个能落锁；
-# 锁不设 TTL：只有新的真实请求（mark_prompt）会删除它重新武装；无法落锁（目录不可写等）一律放行，
-# 绝不在没有锁保护的情况下 block。
-# 凭证状态（prompt_ts/store_ts）也是每会话独立文件 st_<sidkey>.json（temp+rename 原子替换）：
-# 二轮复核指出共享 map 的跨进程 read-modify-write（B 读旧快照 → A 更新 → B 整体写回）会把 A 刚写的
-# 新请求凭证回滚成旧值——原子 rename 只保证单次写完整，不保证事务。文件互不共享后 B 的任何写回
-# 在结构上碰不到 A 的条目；状态文件失败只损失免催优化，不影响一次上限保证。
+TURN_FRESH_S = 1800  # freshness cap for this turn's write receipt: older means stale and no longer suppresses
+# One-shot completion latch (review fix): one lock file per session, O_CREAT|O_EXCL atomic -- of concurrent Stop calls only one can take the lock.
+# No TTL on the latch: only a new real request (mark_prompt) deletes and re-arms it; when the lock cannot be taken (unwritable dir etc.) always allow.
+# Never block without holding the lock.
+# Receipt state (prompt_ts/store_ts) is also a per-session file st_<sidkey>.json (temp+rename atomic replace):
+# round two pointed out that a shared map's cross-process read-modify-write (B reads a stale snapshot -> A updates -> B writes everything back) rolls A's freshly written
+# request receipt back to an old value -- an atomic rename only guarantees one write is complete, not a transaction. With no shared file, none of B's write-backs
+# can structurally touch A's entry; a state failure only loses the suppression optimisation and never breaks the at-most-once guarantee.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _turn_dir():
     base = os.environ.get("RESPITE_TURN_STATE") or _SCRIPT_DIR
     if base.endswith(".json") or base.endswith(".store_turn"):
-        base = os.path.dirname(base)  # 兼容旧文件路径用法：取目录
+        base = os.path.dirname(base)  # accept the legacy file-path form: take the directory
     try:
         os.makedirs(base, exist_ok=True)
         return base
@@ -210,13 +213,13 @@ def _latch_path(session: str):
 
 
 def _map_path(session: str):
-    """每会话独立状态文件；session 为空返回 None（不落状态，只损失免催优化）。"""
+    """The per-session state file; returns None for an empty session (no state written, only the suppression optimisation is lost)."""
     d = _turn_dir()
     return os.path.join(d, "st_" + _sid_key(session) + ".json") if d and session else None
 
 
 def _map_load(session: str) -> dict:
-    """只读本会话自己的状态文件；缺失/损坏 → {}。"""
+    """Read only this session's own state file; missing/broken -> {}."""
     try:
         with open(_map_path(session), encoding="utf-8") as f:
             m = json.load(f)
@@ -226,9 +229,9 @@ def _map_load(session: str) -> dict:
 
 
 def _map_lock(session: str, wait_s: float = 1.0):
-    """同会话读改写事务锁：O_CREAT|O_EXCL 独占 lockfile（跨进程），内容=所有权 token。
-    **不以锁龄推断持有者死亡**——等待超窗一律放弃；放弃是安全的（gen 标记使
-    未登记的新请求不信任旧凭证）。释放只删 token 一致的锁（_release_lock）。"""
+    """Same-session read-modify-write transaction lock: O_CREAT|O_EXCL exclusive lockfile (cross-process), content = ownership token.
+    **Lock age is never used to infer that the holder died** -- a wait past the window always gives up; giving up is safe (the gen marker makes
+    an unregistered new request distrust old receipts). Release deletes only a lock with a matching token (_release_lock)."""
     d = _turn_dir()
     if not d:
         return None
@@ -250,7 +253,7 @@ def _map_lock(session: str, wait_s: float = 1.0):
 
 
 def _release_lock(lock):
-    """所有权校验释放：锁文件内容==自身 token 才删除——绝不误删后继持有者的锁。"""
+    """Ownership-checked release: delete the lock file only when its content equals our own token -- never delete a later holder's lock."""
     if not lock:
         return
     lp, token = lock
@@ -264,9 +267,9 @@ def _release_lock(lock):
 
 
 def _map_update(session: str, patch: dict) -> bool:
-    """更新本会话自己的状态文件：跨进程事务锁内 读→改→temp+rename；失败返回 False，绝不抛。
-    ①每会话独立文件消除跨会话覆盖；②事务锁使同会话 RMW 串行化——旧快照写回不可能
-    回滚新 prompt。锁拿不到=放弃本次更新（丢免催凭证→多一轮有界收催，不产生错误免催）。"""
+    """Update this session's own state file: read -> modify -> temp+rename inside a cross-process transaction lock; returns False on failure, never raises.
+    (1) the per-session file removes cross-session overwrite; (2) the transaction lock serialises same-session RMW, so a stale snapshot write-back can never
+    roll back a new prompt. Failing to get the lock means abandoning this update (lose the suppression receipt -> one more bounded nudge, never a wrong suppression)."""
     p = _map_path(session)
     if not p:
         return False
@@ -288,7 +291,7 @@ def _map_update(session: str, patch: dict) -> bool:
 
 
 def latch_claim(session: str) -> bool:
-    """原子一次收尾锁：独占创建成功=True（本次可 block）；已存在/任何失败=False（放行方向）。"""
+    """One-shot atomic latch: exclusive create succeeds = True (this call may block); already present / any failure = False (allow direction)."""
     p = _latch_path(session)
     if not p:
         return False
@@ -298,11 +301,11 @@ def latch_claim(session: str) -> bool:
         os.close(fd)
         return True
     except Exception:
-        return False  # FileExistsError=已催过；其余失败=无锁不 block
+        return False  # FileExistsError = already nudged; other failures = no lock, do not block
 
 
 def latch_rearm(session: str) -> None:
-    """新真实请求重新武装：删除本会话锁。删不掉时保持上锁（宁可少催，不重复催）。"""
+    """A new real request re-arms: delete this session's latch. If it cannot be deleted keep the latch (prefer under-nudging over repeated nudging)."""
     p = _latch_path(session)
     if not p:
         return
@@ -318,9 +321,9 @@ def _gen_marker_path(session: str):
 
 
 def _write_gen_marker(session: str, gen: float) -> bool:
-    """当前请求代标记：盲写 temp+rename（单值覆盖，无读改写→无锁，不会失败于锁竞争）。
-    它是「当前请求是谁」的真值：新请求即使 _map_update 因锁超窗失败，标记也已推进，
-    旧凭证立即失效（复核④①）。"""
+    """Current-request generation marker: blind write with temp+rename (single value overwrite, no read-modify-write, so no lock and no lock-contention failure).
+    It is the truth about "who is the current request": even if _map_update fails on a lock timeout, the marker already advanced and
+    old receipts stop matching at once (review 4 item 1)."""
     p = _gen_marker_path(session)
     if not p:
         return False
@@ -342,13 +345,13 @@ def _read_gen_marker(session: str):
         return None
 
 
-POISON = float("inf")  # 失效令牌：标记写失败时写入，任何有限凭证永久不匹配（免催安全关闭）
+POISON = float("inf")  # invalid token: written when the marker write fails; no finite receipt ever matches it (suppression safely off)
 
 
 def _invalidate_state(session: str) -> None:
-    """删除本会话状态文件——旧凭证失效的**可靠原语**：unlink 不需要磁盘空间、
-    不受写故障影响。ENOENT=无文件可失效；其他错误忽略：若因目录不可写失败，
-    Stop 的 latch_claim（O_EXCL 创建）同样失败而放行。"""
+    """Delete this session's state file -- the **reliable primitive** for invalidating old receipts: unlink needs no disk space and
+    is immune to write faults. ENOENT = no file to invalidate; other errors are ignored: if it fails because the dir is unwritable,
+    Stop's latch_claim (O_EXCL create) fails the same way and allows."""
     p = _map_path(session)
     if p:
         try:
@@ -358,17 +361,17 @@ def _invalidate_state(session: str) -> None:
 
 
 def _poison_marker(session: str) -> bool:
-    """登记失败的安全降级（复核⑤）：把标记写成 +inf——走同一盲写路径；
-    若连它也失败，旧标记无新写者，恢复后首个 mark_prompt 必然重写标记。"""
+    """Safe degradation when registration fails (review 5): write the marker as +inf -- the same blind-write path;
+    if even that fails there is no new writer of the old marker, so the first mark_prompt after recovery necessarily rewrites it."""
     return _write_gen_marker(session, POISON)
 
 
 def mark_prompt(session: str) -> float:
-    """真实用户请求开始：**先删除旧状态文件**（可靠失效，复核⑤残余：普通 marker/
-    state/POISON 三写均失败时 unlink 仍成功——不需要磁盘空间），再写 gen 标记、
-    状态文件、删一次收尾锁。写失败时叠加 POISON 令牌降级。"""
+    """A real user request starts: **delete the old state file first** (reliable invalidation; review 5 residual: when the normal marker/
+    state/POISON writes all fail, unlink still succeeds because it needs no disk space), then write the gen marker, the
+    state file and remove the one-shot latch. A failed write adds the POISON token as a fallback."""
     gen = time.time()
-    _invalidate_state(session)  # 删除优先于一切写：唯一不依赖写能力的失效原语
+    _invalidate_state(session)  # delete before any write: the only invalidation primitive that needs no write capability
     if not _write_gen_marker(session, gen):
         _poison_marker(session)
     if not _map_update(session, {"prompt_ts": gen}):
@@ -379,25 +382,25 @@ def mark_prompt(session: str) -> float:
 
 
 def mark_store(session: str, gen: float = 0.0):
-    """本层「记：」成功回执：登记 store_req_ts=本次写所属请求代。
-    只有 gen 与当前 prompt_ts 完全一致的凭证才免催——R1 旧写在 R2 prompt 后完成
-    带 R1 的 gen，不会免催 R2。"""
+    """Successful explicit-store receipt for this layer: register store_req_ts = the request generation this write belongs to.
+    Only a receipt whose gen exactly matches the current prompt_ts suppresses -- an R1 write that completes after R2's prompt
+    carries R1's gen and never suppresses R2."""
     _map_update(session, {"store_ts": time.time(), "store_req_ts": gen})
 
 
 def turn_stored(session: str) -> bool:
-    """磁盘凭证免催已**取消**（复核⑥终案）：跨事件没有可靠的「当前请求」磁盘身份——
-    unlink/写/锁的失败-恢复窗口无法闭合（④⑤⑥逐轮证伪）。防重唯一依据回归
-    **latch 语义**（nudge 时 O_EXCL 创建、下一次真实 prompt 删除）。本函数恒 False：
-    Stop 不凭任何磁盘旧记录免催；回执仍诚实输出给模型，状态文件保留作诊断轨迹。"""
+    """Disk-receipt suppression is **cancelled** (review 6 final): across events there is no reliable "current request" disk identity --
+    the failure-recovery window of unlink/write/lock can never be closed (proved wrong round after round in 4/5/6). De-dup goes back to
+    **latch semantics** (created with O_EXCL at nudge time, deleted by the next real prompt). This function is always False:
+    Stop never suppresses from an old disk record; the receipt is still returned honestly and the state file remains a diagnostic trail."""
     return False
 
 
 
 
 def readback(bin_path: str, sid: str, title: str, content: str, cfg: dict, budget_s: float):
-    """写后核验（R11）：show 回读，校验条目存在且标题/正文头一致。
-    返回 verified / mismatch / unavailable；超预算直接 unavailable。"""
+    """Post-write verification (R11): show read-back, checking the entry exists and title/body head match.
+    Returns verified / mismatch / unavailable; over budget returns unavailable directly."""
     if budget_s < 2:
         return "unavailable"
     t0 = time.time()
@@ -411,8 +414,8 @@ def readback(bin_path: str, sid: str, title: str, content: str, cfg: dict, budge
     if not isinstance(doc, dict) or doc.get("status") != "ok":
         log_event(cfg, "readback", "not_ok", str(doc.get("status") if isinstance(doc, dict) else "?"), ms)
         return "unavailable"
-    # 类型防护（二轮复核）：非字典 details（数组/字符串等）不得 .get()——否则 AttributeError
-    # 会掀翻整条已写回执（Saved 丢失）；如实归 unavailable，保留已写事实
+    # Type guard (round two review): a non-dict details (array/string etc.) must not be .get()-ed -- otherwise an AttributeError
+    # would tear down the whole successful write receipt (losing Saved); report unavailable honestly and keep the written fact.
     details = doc.get("details")
     if not isinstance(details, dict):
         log_event(cfg, "readback", "bad_details", "", ms)
@@ -424,16 +427,16 @@ def readback(bin_path: str, sid: str, title: str, content: str, cfg: dict, budge
     summ = doc.get("summary")
     rid_raw = summ.get("id") if isinstance(summ, dict) else None
     eid_raw = entry.get("id")
-    # 三方一致：summary.id、entry.id 都必须原生字符串且等于目标 id（任一缺失/错误=mismatch）
+    # Three-way identity: both summary.id and entry.id must be native strings equal to the target id (any missing/wrong = mismatch).
     if not (isinstance(rid_raw, str) and rid_raw == sid and isinstance(eid_raw, str) and eid_raw == sid):
         log_event(cfg, "readback", "mismatch", "id-triple", ms)
         return "mismatch"
     et_raw, ec_raw = entry.get("title"), entry.get("content")
     if not isinstance(et_raw, str) or not isinstance(ec_raw, str):
         log_event(cfg, "readback", "mismatch", "non-string title/content", ms)
-        return "mismatch"  # 数字/数组/对象正文不强转匹配（42 ≠ "42"）
+        return "mismatch"  # numbers/arrays/objects are never coerced into a match (42 != "42")
     bad_title = bool(title) and et_raw != title
-    bad_body = content.strip() != ec_raw.strip()  # 完整正文比对（去首尾空白规范化）
+    bad_body = content.strip() != ec_raw.strip()  # full body comparison (leading/trailing whitespace normalised)
     if bad_title or bad_body:
         log_event(cfg, "readback", "mismatch", f"title={bad_title} body={bad_body}", ms)
         return "mismatch"
@@ -442,8 +445,8 @@ def readback(bin_path: str, sid: str, title: str, content: str, cfg: dict, budge
 
 
 def verify_recent_write(bin_path: str, t0: float, max_wait: float = 0):
-    """未知写结果的只读核实（R10）：list 近 3 条里是否有 t0 之后落库的条目。返回 (id, title) 或 None。
-    max_wait>0 时受剩余 hook 预算约束（超时上限取 min(LIST_T, max_wait)）。"""
+    """Read-only verification of an unknown write result (R10): is there an entry in the last 3 list results committed after t0? Returns (id, title) or None.
+    With max_wait>0 the timeout is bounded by the remaining hook budget (min(LIST_T, max_wait))."""
     try:
         timeout = LIST_T
         if max_wait > 0:
@@ -458,35 +461,35 @@ def verify_recent_write(bin_path: str, t0: float, max_wait: float = 0):
         v = _epoch(d.get(k))
         if v is not None and (ts is None or v > ts):
             ts = v
-    if ts is None or ts < t0 - 0.05:  # 引擎时间戳毫秒截断留 50ms 容差；更早的写入不归属本次
+    if ts is None or ts < t0 - 0.05:  # 50ms tolerance for engine millisecond truncation
         return None
     return str(d.get("id") or ""), str(d.get("title") or "")
 
 
 def do_store(bin_path: str, content: str, cfg: dict, session: str = "", gen: float = 0.0) -> str:
-    """显式落库回执状态机（对齐 CLI 信封语义，审计报告 §7.1/§7.2）：
-      ok + summary.id   → 已写入：show 回读核验后回执（verified/mismatch/unavailable 如实标注）
-      warn + summary.id → 已写入但有警告（parent 未解析 / post-remember hook 告警）——
-                          绝不当失败、绝不引导重发；附 errors 摘要并回读
-      pending           → 未写入：转述候选（items 带短 id）＋引擎建议动作（改＞并＞挂＞存）
-      超时/中止          → 结果未知：不再发引擎调用（预算已耗尽）；回执只允许只读核实
-      预算（monotonic）  → remember/read-back/只读核实共用 time.monotonic() 截止
-                          （RESPITE_HOOK_BUDGET_S，默认 20s，预留 2.5s）；remember 超时取
-                          min(STORE_T, 剩余预算)；进场剩余≤0 时连 remember 也不发，直接 unknown
-      坏信封/无输出      → 结果未知：先只读查库（list 近 3 条），禁止自动重写
-      其余明确拒绝态     → fail：转述 errors，不自动重试
+    """Explicit store receipt state machine (aligned with the CLI envelope semantics, audit report 7.1/7.2):
+      ok + summary.id   -> written: receipt after a show read-back (verified/mismatch/unavailable labelled honestly)
+      warn + summary.id -> written with warnings (parent unresolved / post-remember hook warning) --
+                          never a failure, never prompt a resend; attach the errors summary and read back
+      pending           -> not written: report candidates (items with short ids) plus engine-suggested actions (update > merge > attach > store)
+      timeout/abort     -> unknown: no further engine calls (budget exhausted); read-only verification only
+      budget (monotonic) -> remember/read-back/read-only verification share one time.monotonic() deadline
+                          (RESPITE_HOOK_BUDGET_S, default 20s, with 2.5s headroom); the remember timeout is
+                          min(STORE_T, remaining budget); if the remaining budget is <=0 on entry even remember is skipped and it goes straight to unknown
+      bad envelope/no output -> unknown: read-only list first (last 3), never auto-rewrite
+      any other explicit rejection -> fail: report errors, never auto-retry
     """
     if not content:
         log_event(cfg, "store", "empty_content")
         return ""
     title = extract_title(content) or "respire quick store"
-    wall0 = time.time()        # epoch 钟：与引擎 updated_at 归属比对
-    mono0 = time.monotonic()   # 单调钟：预算截止（不受系统时钟回拨/校时影响）
+    wall0 = time.time()        # epoch clock: used to attribute the engine's updated_at
+    mono0 = time.monotonic()   # monotonic clock: budget deadline (immune to clock changes)
     deadline = mono0 + (float(os.environ.get("RESPITE_HOOK_BUDGET_S") or 20) - 2.5)
     rem = deadline - time.monotonic()
     r = None
     if rem <= 0:
-        # 进场即无剩余预算：不发 remember（等不到可靠回执只会留一个未知写），直接按结果未知处理
+        # No budget left on entry: skip remember (an unreliable receipt just leaves an unknown write) and treat it as unknown
         log_event(cfg, "store", "unknown_no_budget", f"rem={rem:.2f}")
         return ("【respire · store unknown】The write result is unknown (hook budget exhausted before the write). "
                 "Verify read-only: rsrs list --limit 3 --json, then rsrs show <id>. Do NOT resend rsrs remember "
@@ -509,11 +512,11 @@ def do_store(bin_path: str, content: str, cfg: dict, session: str = "", gen: flo
     status = str(doc.get("status") or "")
     summ = doc.get("summary")
     raw_id = summ.get("id") if isinstance(summ, dict) else None
-    # 严格类型：id 必须本来就是字符串（JSON 数字 12345678 不强转）；白名单=UUID 或 16+ 位 hex
+    # Strict type: the id must already be a string (JSON number 12345678 is not coerced); the whitelist is a UUID or 16+ hex chars
     sid = raw_id if isinstance(raw_id, str) and re.fullmatch(
         r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{16,}", raw_id, re.I) else ""
 
-    # —— 已写入：ok / warn（warn 也是已提交，只是带警告）——
+    # -- written: ok / warn (warn is still committed, only with warnings) --
     if parse_ok and sid and status in ("ok", "warn"):
         mark_store(session, gen)
         if status == "warn":
@@ -539,7 +542,7 @@ def do_store(bin_path: str, content: str, cfg: dict, session: str = "", gen: flo
                 f"{sid[:8]} --title (title is the facade for recall and dedup).")
         return out
 
-    # —— 未写入：pending 候选（含 pre-remember veto 等一切 pending 态）——
+    # -- not written: pending candidates (includes every pending state such as pre-remember veto) --
     if parse_ok and status == "pending":
         log_event(cfg, "store", "pending", f"cand={len(doc.get('items') or [])}", ms)
         lines = ["【respire · store pending】respire judged this item similar to existing memory (or a hook vetoed it); "
@@ -557,19 +560,19 @@ def do_store(bin_path: str, content: str, cfg: dict, session: str = "", gen: flo
                          "and keep placement pending without an actually read relevant parent; never force or downgrade.")
         return "\n".join(lines)
 
-    # —— 引擎按当前模式拒绝执行（skip：readonly/paused 等，未写也不是失败）——
+    # -- engine refused in the current mode (skip: readonly/paused etc.; not written, not a failure) --
     if parse_ok and status == "skip":
         log_event(cfg, "store", "skip_mode", "", ms)
         return ("【respire · not stored】The engine skipped the operation (read-only or paused mode); "
                 "follow engine policy and never force a write.")
-    # —— 明确拒绝（白名单：仅 fail 断言未接受）——
+    # -- explicit rejection (whitelist: only a fail assertion is not accepted) --
     if parse_ok and status == "fail":
         errs = doc.get("errors") if isinstance(doc.get("errors"), list) else []
         msg = json.dumps(errs, ensure_ascii=False)[:200] if errs else f"status=fail rc={r.returncode}"
         log_event(cfg, "store", "fail", msg, ms)
         return f"【respire · store failed】respire did not accept it: {msg}"
 
-    # —— 结果未知：坏信封/无输出（engine 秒回）→ 剩余预算足够才只读查库 ——
+    # -- unknown: bad envelope/no output (engine answered instantly) -> read-only list if budget allows --
     if r is not None:
         budget_s = deadline - time.monotonic()
         hit = None
@@ -588,7 +591,7 @@ def do_store(bin_path: str, content: str, cfg: dict, session: str = "", gen: flo
         return ("【respire · store unknown】The write result is unknown (engine returned an unreadable receipt). "
                 "Verify read-only: rsrs list --limit 3 --json, then rsrs show <id>. Do NOT resend rsrs remember "
                 "for the same fact — resending can duplicate an already-committed write.")
-    # —— 超时/中止（预算已耗尽，不再发引擎调用）——
+    # -- timeout/abort (budget exhausted, no further engine calls) --
     log_event(cfg, "store", "unknown_timeout", "", ms)
     return ("【respire · store unknown】The write result is unknown (engine timed out). Verify read-only: "
             "rsrs list --limit 3 --json, then rsrs show <id>. Do NOT resend rsrs remember for the same fact — "
@@ -596,8 +599,8 @@ def do_store(bin_path: str, content: str, cfg: dict, session: str = "", gen: flo
 
 
 def do_recall(bin_path: str, prompt: str, cfg: dict) -> str:
-    """每轮召回：--titles 标题档（respire 设计——只注分数＋短 id＋标题，正文由 agent rsrs show <id> 按需取）。
-    rsrs 自带相关性门（无关→skip 零命中），本层再按阈值滤掉碰瓷命中。"""
+    """Per-turn recall in --titles mode (respire design: inject only the score, short id and title; the agent pulls the body on demand with rsrs show <id>).
+    rsrs has its own relevance gate (irrelevant -> skip, zero hits); this layer additionally drops near-miss hits by threshold."""
     t0 = time.time()
     try:
         r = run_rsrs(bin_path, ["recall", prompt, "--limit",
@@ -616,12 +619,12 @@ def do_recall(bin_path: str, prompt: str, cfg: dict) -> str:
         return ""
     if not isinstance(doc, dict) or doc.get("status") not in ("ok", "skip"):
         log_event(cfg, "recall", "status_fail", str(doc.get("status") if isinstance(doc, dict) else "?"), ms)
-        return ""  # fail 静默（fail-open）；skip = 自带门判为无关
+        return ""  # fail is silent (fail-open); skip = the built-in gate judged it irrelevant
     details = doc.get("details") or []
     if not isinstance(details, list):
         log_event(cfg, "recall", "bad_details", "", ms)
         return ""
-    thr = float(cfg["recall_threshold"])   # 0=直出不过滤；噪音边界交给 rsrs 自带 skip 门＋limit＋标题档
+    thr = float(cfg["recall_threshold"])   # 0 = raw output; noise bounds come from rsrs's skip gate
     keep = []
     max_score = 0.0
     for d in details:
@@ -640,7 +643,7 @@ def do_recall(bin_path: str, prompt: str, cfg: dict) -> str:
                   f"max={max_score:.3f} thr={thr:g} q={prompt[:40]}", ms)
         return ""
     budget = int(cfg["budget_chars"])
-    lines, used = [], 90  # 90 留给头行上界，砍点据此提前
+    lines, used = [], 90  # 90 reserved for the header line so trimming happens earlier
     for score, d in keep:
         title = str(d.get("title") or "").strip() or "(untitled)"
         eid = str(d.get("id") or "")[:8]
@@ -661,8 +664,8 @@ def do_recall(bin_path: str, prompt: str, cfg: dict) -> str:
 
 
 def probe_status(bin_path: str):
-    """SessionStart 一次 status 仅作诊断留痕（登录态＋库量＋探测成败；热态约 190ms）。
-    返回 (logged, total, probe_ok)：logged True/False/None；total int/None；probe_ok False=status 未回。"""
+    """One SessionStart status call for the diagnostic trail only (login + store size + probe outcome; ~190ms warm).
+    Returns (logged, total, probe_ok): logged True/False/None; total int/None; probe_ok False = status did not return."""
     t0 = time.time()
     try:
         r = run_rsrs(bin_path, ["status", "--json"], PROBE_T)
@@ -696,7 +699,7 @@ STORE_NUDGE = """Memory check (automatic, once): if this turn produced new facts
 
 
 def _epoch(rfc3339):
-    """'2026-10-22T15:06:38.926Z' → epoch 秒；解析失败返回 None（不猜时区）。"""
+    """'2026-10-22T15:06:38.926Z' -> epoch seconds; None on parse failure (never guess a timezone)."""
     if not isinstance(rfc3339, str) or not rfc3339.strip():
         return None
     s = rfc3339.strip()
@@ -707,14 +710,14 @@ def _epoch(rfc3339):
     except Exception:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=datetime.timezone.utc)  # 无偏移一律按 UTC（rsrs 输出恒带 Z）
+        dt = dt.replace(tzinfo=datetime.timezone.utc)  # no offset means UTC (rsrs always emits Z)
     return dt.timestamp()
 
 
 def _last_store_detail(engine, timeout: int = LIST_T):
-    """问引擎最近一条记录（list 近 3 条取 updated/created 最新者）。
-    返回 (detail|None, query_ok)：query_ok=False = 查询失败/超时/坏信封——
-    调用方必须放行（fail-open），不得据「查不到」催存。"""
+    """Ask the engine for the most recent record (list last 3, keep the newest updated/created).
+    Returns (detail|None, query_ok): query_ok=False means query failed/timed out/bad envelope --
+    the caller must allow (fail-open) and must not nudge a store because "nothing was found"."""
     try:
         r = run_rsrs(engine, ["list", "--limit", "3", "--json"], timeout)
     except Exception:
@@ -727,7 +730,7 @@ def _last_store_detail(engine, timeout: int = LIST_T):
         return None, False
     details = doc.get("details")
     if not isinstance(details, list):
-        return None, False  # 坏信封（details 非数组）按查询失败处理 → 不归属
+        return None, False  # bad envelope (details not a list) counts as a failed query
     best, best_ts, any_ts = None, None, False
     for d in details:
         if not isinstance(d, dict):
@@ -742,19 +745,19 @@ def _last_store_detail(engine, timeout: int = LIST_T):
             if best_ts is None or ts > best_ts:
                 best, best_ts = d, ts
     if details and not any_ts:
-        return None, False  # 非空却无可解析时间戳：schema 异常 → 查询失败
-    return best, True  # 合法空库（details:[]）：查询成功、无近期写入
+        return None, False  # non-empty but no parseable timestamp: schema anomaly -> query failed
+    return best, True  # legitimate empty store (details:[]): query succeeded, no recent write
 
 
 def on_stop(data: dict, cfg: dict, engine) -> str:
-    """Stop 存储检查：干完活的存储提示（block+reason 续跑一轮）。
-    规范防循环：续跑轮 stdin 带 stop_hook_active=true → 放行。
-    审计整改后的免催/放行契约（DM-01/DM-03/DM-04）：
-      - 查库失败/超时/坏信封 → 放行（fail-open：记忆层故障不得拦主任务）
-      - 本轮已有成功写回执（同会话、prompt 之后）→ 放行
-      - 引擎侧写入晚于本轮 prompt（同会话；agent 自行 rsrs remember）→ 放行
-      - 每个真实请求至多 block 一次（stop_hook_active ＋ 本层一次收尾锁双保险）
-      - 缺会话/轮次凭证时不免催（宁可多一轮有界收尾，不做跨轮误抑制）"""
+    """Stop store check: the end-of-work store nudge (block + reason, one extra turn).
+    Loop guard: a continuation turn carries stop_hook_active=true on stdin -> allow.
+    After the audit fix the suppression/allow contract is (DM-01/DM-03/DM-04):
+      - list failure/timeout/bad envelope -> allow (fail-open: a memory fault must not block the main task)
+      - this turn already has a successful write receipt (same session, after the prompt) -> allow
+      - an engine-side write later than this turn's prompt (same session; the agent ran rsrs remember itself) -> allow
+      - at most one block per real request (stop_hook_active plus this layer's one-shot latch)
+      - missing session/turn identity never suppresses (prefer one bounded extra turn over wrong cross-turn suppression)"""
     if data.get("stop_hook_active") is True:
         log_event(cfg, "stop", "active_skip")
         return ""
@@ -763,7 +766,7 @@ def on_stop(data: dict, cfg: dict, engine) -> str:
     every = int(cfg.get("store_nudge_every", 1))
     if every <= 0:
         return ""
-    try:  # 节流计数（失败则不拦）
+    try:  # throttle counter (on failure do not block)
         state = os.environ.get("RESPITE_NUDGE_STATE") or os.path.join(_SCRIPT_DIR, ".nudge_counter")
         n = 0
         try:
@@ -780,12 +783,12 @@ def on_stop(data: dict, cfg: dict, engine) -> str:
     except Exception:
         pass
     session = str(data.get("session_id") or "")
-    # 一次收尾锁：O_EXCL 原子独占；无法落锁（含目录不可写）一律放行——绝不无锁 block
+    # One-shot latch: O_EXCL atomic; if it cannot be taken (including an unwritable dir) always allow -- never block without a lock.
     if not latch_claim(session):
         log_event(cfg, "stop", "once_latch_skip")
         return ""
-    # 复核整改：移除「全库最新写入时间晚于本轮 prompt 即免催」——引擎侧写入无法归属到
-    # 本会话/本请求（其他会话并行写入会误抑制）。免催只认可归属凭证：本层成功写回执。
+    # Review fix: removed "the newest write across the whole store later than this turn's prompt suppresses" -- an engine-side write cannot be attributed to
+    # this session/request (a parallel write from another session would wrongly suppress). Suppression only accepts attributable receipts: this layer's successful write.
     log_event(cfg, "stop", "nudge")
     return json.dumps({"decision": "block", "reason": STORE_NUDGE}, ensure_ascii=False)
 
@@ -793,19 +796,19 @@ def on_stop(data: dict, cfg: dict, engine) -> str:
 def on_prompt(data: dict, cfg: dict, engine) -> str:
     prompt = data.get("prompt")
     if not isinstance(prompt, str):
-        log_event(cfg, "prompt", "bad_prompt", "非字符串")
+        log_event(cfg, "prompt", "bad_prompt", "not_a_string")
         return ""
     prompt = prompt.strip()
     if not prompt:
         log_event(cfg, "prompt", "nomem_or_empty", prompt[:40])
         return ""
     session = str(data.get("session_id") or "")
-    gen = mark_prompt(session)  # 真实请求：记代并重武装；/nomem 只跳召回仍是新请求
+    gen = mark_prompt(session)  # real request: record the generation and re-arm; /nomem only skips recall and is still a new request
     if SKIP_PREFIX.match(prompt):
         log_event(cfg, "prompt", "nomem_or_empty", prompt[:40])
         return ""
     if contains_secret(prompt):
-        # 只记原因码，不落输入摘要——redact 盖不住普通 api_key/token/secret 赋值与 Bearer 值，摘要会泄密
+        # Log the reason code only, never the input summary -- redact cannot cover plain api_key/token/secret assignments and Bearer values, so a summary would leak.
         log_event(cfg, "prompt", "secret_skip")
         return SECRET_SKIP
     m = STORE_PREFIX.match(prompt)
@@ -822,7 +825,7 @@ def on_prompt(data: dict, cfg: dict, engine) -> str:
     if not engine:
         log_event(cfg, "recall", "engine_missing", prompt[:40])
         return ""
-    query = SKILL_PREFIX.sub("", prompt).strip() or prompt  # 技能指认轮剥前缀，防技能名污染 query
+    query = SKILL_PREFIX.sub("", prompt).strip() or prompt  # strip the skill prefix so it cannot pollute the query
     return do_recall(engine, query, cfg)
 
 
@@ -830,7 +833,7 @@ def main() -> None:
     try:
         event = (sys.argv[1] if len(sys.argv) > 1 else "") or os.environ.get("DIM_HOOK_EVENT", "")
         try:
-            # 事件 JSON 恒为 UTF-8；Windows 非 UTF-8 区域（如 cp1252）下 read() 会按本地码页误解码
+            # Event JSON is always UTF-8; on a non-UTF-8 Windows locale (e.g. cp1252) read() would decode with the local code page.
             raw = "" if sys.stdin.isatty() else sys.stdin.buffer.read().decode("utf-8", "replace")
         except Exception:
             try:
@@ -848,7 +851,7 @@ def main() -> None:
 
     try:
         cfg = load_config()
-        if not cfg.get("enabled", True):        # 总开关：关闭=全线静默（管理器档）
+        if not cfg.get("enabled", True):        # master switch: off = whole memory layer silent
             log_event(cfg, event or "unknown", "disabled")
             raise SystemExit(0)
         engine = find_rsrs(cfg)
@@ -860,7 +863,7 @@ def main() -> None:
                 log_event(cfg, "session", "engine_missing")
             else:
                 out = RULES
-                logged, total, probe_ok = probe_status(engine)  # 一次 status 仅留痕，不注入额外段
+                logged, total, probe_ok = probe_status(engine)  # one status call, trail only
                 log_event(cfg, "session", "ok",
                           f"probe={'ok' if probe_ok else 'fail'} logged={logged} total={total}")
         elif event == "UserPromptSubmit":
@@ -870,7 +873,7 @@ def main() -> None:
         else:
             out = ""
     except Exception as e:
-        out = ""  # fail-open——但必须留痕，否则「时灵时不灵」无从复盘
+        out = ""  # fail-open -- but always leave a trail, or "works sometimes" is undiagnosable
         try:
             log_event(DEFAULTS, event or "unknown", "fatal", f"{type(e).__name__}: {e}")
         except Exception:
@@ -887,7 +890,7 @@ def main() -> None:
                 buf.flush()
         except Exception:
             pass
-    sys.exit(0)  # 恒 exit 0：纯文本 stdout 即 additionalContext，无文本即无决策
+    sys.exit(0)  # always exit 0: plain-text stdout is additionalContext, no text means no decision
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# 用户本地配置不进仓（安装时由 example 生成）
+# User-local config is not committed (generated from the example at install time)
 hooks/respire.config.json
 __pycache__/
 *.pyc
@@ -11,7 +11,7 @@ hooks/.nudge_counter
 
 release-out/
 
-# 运行期产物（hook 诊断与测试），不进仓
+# Runtime artifacts (hook diagnostics and tests) are not committed
 hook.log
 .nudge_counter
 .pending_nudge

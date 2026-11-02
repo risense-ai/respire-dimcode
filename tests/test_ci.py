@@ -39,7 +39,7 @@ import json, os, pathlib, runpy, sys
 case = pathlib.Path(os.environ['RESPITE_CONFIG']).resolve().parent
 expected = os.environ['TEST_ENGINE']
 expected_argv = json.loads(os.environ['TEST_EXPECTED_ARGV'])
-assert isinstance(expected_argv, list)  # 空序列=零引擎调用（复核⑥ Stop 不查引擎）
+assert isinstance(expected_argv, list)   # empty sequence = zero engine calls (review 6: Stop does not query the engine)
 for argv in expected_argv:
     assert isinstance(argv, list) and argv[0] == expected
 config = json.loads(pathlib.Path(os.environ['RESPITE_CONFIG']).read_text(encoding="utf-8"))
@@ -89,11 +89,11 @@ list_mode = os.environ.get('STUB_LIST', mode)
 if mode == 'dead': sys.exit(7)
 if mode == 'malformed': print('not json'); sys.exit(0)
 if mode == 'hang':
-    # 先把继承的 stdout/stderr 写端转投 devnull、CWD 挪出测试临时目录再挂起：
-    # Windows 下引擎是 .cmd 壳，run() 超时 kill 的只是壳——孙进程攥着管道会让
-    # communicate 阻塞到 sleep 自然结束（超时形同虚设），攥着 CWD 会让用例清理
-    # PermissionError。写端一关 EOF 立即到达（TimeoutExpired 按时抛出），CWD 一挪
-    # 孤儿进程不再锁任何测试产物。
+# redirect the inherited stdout/stderr write ends to devnull and move the CWD out of the test temp dir before suspending:
+# on Windows the engine is a .cmd shell and run() timeout kills only the shell -- a grandchild holding the pipe would make
+# communicate block until the sleep ends naturally (the timeout is useless) and one holding the CWD would make cleanup fail
+# with PermissionError. Closing the write end makes EOF arrive at once (TimeoutExpired raises on time) and moving the CWD keeps
+# orphan processes from locking any test artifact.
     try:
         _dn = os.open(os.devnull, os.O_WRONLY)
         os.dup2(_dn, 1)
@@ -208,7 +208,7 @@ else: sys.exit(1)
         self.config.write_text(json.dumps({'rsrs':str(self.engine), 'session_rules':True,
                                           'store_nudge_every':every}), encoding="utf-8")
         if event == 'Stop':
-            args_seq = []  # 复核⑥：Stop 完全不查引擎（零调用序列）
+            args_seq = []   # review 6: Stop does not query the engine at all (zero-call sequence)
         elif event == 'SessionStart':
             args_seq = [['status','--json']]
         elif event == 'StoreReceipt':
@@ -218,11 +218,11 @@ else: sys.exit(1)
                 args_seq = [argv, ['show','dddddddddddddddd','--json']]
             elif mode == 'warn':
                 args_seq = [argv, ['show','eeeeeeeeeeeeeeee','--json']]
-            elif mode in ('silent','ok_noid','ok_junkid','bad_summary','ok_numid','ok_dashid'):  # 未知回执 → 只读核实 list
+            elif mode in ('silent','ok_noid','ok_junkid','bad_summary','ok_numid','ok_dashid'):   # unknown receipt -> read-only list verification
                 args_seq = [argv, ['list','--limit','3','--json']]
-            else:                    # pending / hang / skip_status / slow_garbage：不再有后续引擎调用
+            else:                     # pending / hang / skip_status / slow_garbage: no further engine call
                 args_seq = [argv]
-        elif re.match(r'^(?:记|存|记录|记住|remember|store)\s*[:：]', prompt, re.I):
+        elif re.match(r'^(?:\u8bb0|\u5b58|\u8bb0\u5f55|\u8bb0\u4f4f|remember|store)\s*[:\uff1a]', prompt, re.I):
             args_seq = []
         else:
             args_seq = [['recall',prompt,'--limit','5','--titles','--json']]
@@ -278,7 +278,7 @@ else: sys.exit(1)
     def test_store_prefix_credential_is_blocked(self):
         self.positive_control()
         before = self.recorded()
-        output = self.call('记：数据库密码 = hunter2u')
+        output = self.call('\u8bb0\uff1a\u6570\u636e\u5e93\u5bc6\u7801 = hunter2u')
         self.assertIn('contains a credential', output)
         self.assertEqual(self.recorded(), before)
         self.assertNotIn('hunter2u', output + self.log.read_text(encoding="utf-8"))
@@ -300,7 +300,7 @@ else: sys.exit(1)
         self.assertEqual([args[0] for args in self.recorded()], ['status'])
 
     def test_explicit_store_prefix_hands_off_without_writes(self):
-        for prefix in ('store:', 'remember:', '记：', '存：', '记录：', '记住：'):
+        for prefix in ('store:', 'remember:', '\u8bb0\uff1a', '\u5b58\uff1a', '\u8bb0\u5f55\uff1a', '\u8bb0\u4f4f\uff1a'):
             out = self.call(prefix + ' durable fixture fact')
             self.assertIn('store pending', out)
             self.assertIn('Nothing was written', out)
@@ -316,8 +316,8 @@ else: sys.exit(1)
         self.assertEqual(self.recorded(), [])
 
     def test_store_warn_is_written_not_refused(self):
-        # CLI 契约：status=warn + 有效 id = 已提交但有警告（parent 未解析等）——
-        # 不得误报「未接受」，更不得引导重发（重复写风险）
+        # CLI contract: status=warn with a valid id means committed with warnings (e.g. unresolved parent) --
+        # never report "not accepted" and never prompt a resend (duplicate-write risk)
         out = self.call('store: durable fixture fact', event='StoreReceipt', mode='warn')
         self.assertIn('Saved with warnings', out)
         self.assertIn('parent (cause) cannot be resolved', out)
@@ -326,7 +326,7 @@ else: sys.exit(1)
         self.assertEqual([args[0] for args in self.recorded()], ['remember', 'show'])
 
     def test_store_pending_relays_candidates_and_actions(self):
-        # §7.2：pending 保留候选（含短 id）与引擎建议动作（改＞并＞挂＞存），不得缩成 parent/force 两项
+        # §7.2: pending keeps the candidates (with short ids) and the engine-suggested actions (update > merge > attach > store), never reduced to parent/force
         out = self.call('store: durable fixture fact', event='StoreReceipt', mode='pending')
         self.assertIn('store pending', out)
         self.assertIn('nothing was written', out)
@@ -338,7 +338,7 @@ else: sys.exit(1)
         self.assertEqual([args[0] for args in self.recorded()], ['remember'])
 
     def test_store_readback_states(self):
-        # R11 写后核验：verified / mismatch / unavailable 三态都如实进回执
+        # R11 post-write verification: verified / mismatch / unavailable are all reported honestly in the receipt
         self.assertIn('verified by read-back', self.call('store: durable fixture fact', event='StoreReceipt'))
         self.assertIn('DIFFERENT title/content',
                       self.call('store: durable fixture fact', event='StoreReceipt', mode='show_mismatch'))
@@ -346,7 +346,7 @@ else: sys.exit(1)
                       self.call('store: durable fixture fact', event='StoreReceipt', mode='show_fail'))
 
     def test_store_unknown_receipt_never_demands_resend(self):
-        # R10：坏回执 = 结果未知 → 只读核实；绝不当确定失败、绝不引导重发 remember
+        # R10: bad receipt = unknown result -> read-only verification; never a definite failure, never prompt a resend
         out = self.call('store: durable fixture fact', event='StoreReceipt', mode='silent')
         self.assertIn('store unknown', out)
         self.assertIn('Do NOT resend', out)
@@ -355,7 +355,7 @@ else: sys.exit(1)
         self.assertEqual([args[0] for args in self.recorded()], ['remember', 'list'])
 
     def test_store_timeout_is_unknown_and_makes_no_further_calls(self):
-        # 超时 = 结果未知：回执只允许只读核实指引，不再发引擎调用（预算已耗尽）
+# timeout = unknown result: the receipt allows read-only verification only and sends no further engine call (budget exhausted)
         before = self.recorded()
         out = self.call('store: durable fixture fact', event='StoreReceipt', mode='hang', fast=True)
         self.assertIn('store unknown', out)
@@ -374,7 +374,7 @@ else: sys.exit(1)
 
     def test_stop_every_third_request_and_disabled_zero_calls(self):
         for number in range(1, 7):
-            self.call(f'ordinary input {number}')          # 每轮都是新请求：重新武装收尾预算
+            self.call(f'ordinary input {number}')           # every turn is a new request: re-arm the completion budget
             raw = self.call(event='Stop', every=3)
             if number in (3, 6):
                 self.assertEqual(json.loads(raw)['decision'], 'block')
@@ -387,7 +387,7 @@ else: sys.exit(1)
         self.assertEqual((self.case / 'nudge').read_text(encoding="utf-8"), '6')
 
     def test_prompt_registration_failure_invalidates_old_receipt(self):
-        # 第四轮①：旧请求已存→持锁令新登记失败→释放→新请求 Stop 不凭旧记录免催
+# round four item 1: previous request already stored -> holding the lock makes the new registration fail -> release -> the new request's Stop must not suppress from the old record
         import importlib.util as iu, time as _t
         from pathlib import Path as P
         import os as _os
@@ -406,14 +406,14 @@ else: sys.exit(1)
             lock = mod._map_lock(sid, wait_s=0.05)
             self.assertIsNotNone(lock)
             try:
-                gen2 = mod.mark_prompt(sid)   # 标记盲写成功；状态更新因锁失败
-                self.assertFalse(mod.turn_stored(sid))  # 旧凭证已被标记失效
+                gen2 = mod.mark_prompt(sid)    # marker blind write succeeded; the state update fails on the lock
+                self.assertFalse(mod.turn_stored(sid))   # the old receipt has been invalidated by the marker
             finally:
                 mod._release_lock(lock)
             self.assertFalse(mod.turn_stored(sid))
             mod.mark_store(sid, gen2)
-            self.assertFalse(mod.turn_stored(sid))  # 登记曾失败：保守失效（多催方向）
-            gen3 = mod.mark_prompt(sid)              # 恢复路径：正常登记+写入
+            self.assertFalse(mod.turn_stored(sid))   # registration once failed: conservative invalidation (bias to nudging)
+            gen3 = mod.mark_prompt(sid)               # recovery path: normal registration and write
             mod.mark_store(sid, gen3)
             self.assertFalse(mod.turn_stored(sid))
         finally:
@@ -423,9 +423,9 @@ else: sys.exit(1)
                 _os.environ.pop('RESPITE_TURN_STATE', None)
 
     def test_common_write_failure_poisons_old_receipt(self):
-        # 第五轮残余（复审点名顺序）：旧成功凭证 → 三写全失败期间调用 mark_prompt
-        # → 恢复写能力但不调用 mark_prompt/不手写 POISON → 当前请求 Stop 不免催
-        # → 正常登记恢复。关键：失效靠 _invalidate_state 的 unlink（无需磁盘空间）。
+# round five residual (review-flagged order): an old successful receipt -> mark_prompt called while all three writes fail
+# -> write capability returns but mark_prompt is not called and POISON is not hand-written -> the current request's Stop does not suppress
+# -> normal registration recovers. Key: invalidation relies on _invalidate_state's unlink (needs no disk space).
         import importlib.util as iu, tempfile, shutil
         from pathlib import Path as P
         import os as _os
@@ -443,15 +443,15 @@ else: sys.exit(1)
             state_p = P(mod._map_path(sid))
             self.assertTrue(state_p.exists())
             orig_w, orig_u = mod._write_gen_marker, mod._map_update
-            mod._write_gen_marker = lambda s2, g2: False  # marker+POISON 全失败
-            mod._map_update = lambda s2, p2: False        # state 失败
-            mod.mark_prompt(sid)                          # 真实调用：unlink 删旧状态
-            mod._write_gen_marker = orig_w                # 恢复写能力
+            mod._write_gen_marker = lambda s2, g2: False   # marker and POISON both fail
+            mod._map_update = lambda s2, p2: False         # state fails
+            mod.mark_prompt(sid)                           # real call: unlink deletes the old state
+            mod._write_gen_marker = orig_w                 # write capability restored
             mod._map_update = orig_u
-            # 不调用 mark_prompt、不手写 POISON——当前请求 Stop：
-            self.assertFalse(state_p.exists())            # 旧状态已物理删除
-            self.assertFalse(mod.turn_stored(sid))        # 不凭旧记录免催
-            gen3 = mod.mark_prompt(sid)                   # 恢复路径
+# no mark_prompt, no hand-written POISON -- the current request's Stop:
+            self.assertFalse(state_p.exists())             # the old state has been physically deleted
+            self.assertFalse(mod.turn_stored(sid))         # does not suppress from the old record
+            gen3 = mod.mark_prompt(sid)                    # recovery path
             mod.mark_store(sid, gen3)
             self.assertFalse(mod.turn_stored(sid))
         finally:
@@ -460,7 +460,7 @@ else: sys.exit(1)
             else:
                 _os.environ.pop('RESPITE_TURN_STATE', None)
     def test_common_write_failure_poisons_old_receipt(self):
-        # 第五轮：旧同代成功凭证→共同写失败（旧文件保持可读）→降级/恢复→不免催；正常登记恢复
+# round five: an old valid receipt of the same generation -> all writes fail (the old file stays readable) -> degrade/recover -> no suppression; normal registration recovers
         import importlib.util as iu, tempfile, shutil
         from pathlib import Path as P
         import os as _os
@@ -476,16 +476,16 @@ else: sys.exit(1)
             mod.mark_store(sid, gen1)
             self.assertFalse(mod.turn_stored(sid))
             orig_w, orig_u = mod._write_gen_marker, mod._map_update
-            mod._write_gen_marker = lambda s2, g2: False   # 共同写失败：标记 False
-            mod._map_update = lambda s2, p2: False          # 状态 False；降级也失败
-            mod.mark_prompt(sid)                            # 旧文件保持相等可读
-            mod._write_gen_marker = orig_w                  # 降级写恢复（写 POISON）
+            mod._write_gen_marker = lambda s2, g2: False    # all writes fail: marker False
+            mod._map_update = lambda s2, p2: False           # state False; the degraded write fails too
+            mod.mark_prompt(sid)                             # the old file stays readable and equal
+            mod._write_gen_marker = orig_w                   # degraded write recovers (writes POISON)
             self.assertTrue(mod._poison_marker(sid))
-            self.assertFalse(mod.turn_stored(sid))           # POISON：任何有限凭证失效
+            self.assertFalse(mod.turn_stored(sid))            # POISON: every finite receipt is invalid
             mod._map_update = orig_u
-            gen3 = mod.mark_prompt(sid)                     # 完全恢复
+            gen3 = mod.mark_prompt(sid)                      # fully recovered
             mod.mark_store(sid, gen3)
-            self.assertFalse(mod.turn_stored(sid))           # 免催恢复
+            self.assertFalse(mod.turn_stored(sid))            # suppression recovered
         finally:
             if old is not None:
                 _os.environ['RESPITE_TURN_STATE'] = old
@@ -493,7 +493,7 @@ else: sys.exit(1)
                 _os.environ.pop('RESPITE_TURN_STATE', None)
 
     def test_lock_ownership_no_steal_no_wrong_release(self):
-        # 第四轮②：无年龄抢占（活持有者期间第二进程超窗放弃）；token 校验释放
+# round four item 2: no age-based preemption (a second process gives up past the window while the holder is alive); token-checked release
         import importlib.util as iu
         from pathlib import Path as P
         import os as _os, tempfile, shutil
@@ -507,11 +507,11 @@ else: sys.exit(1)
             sid = 'locks'
             first = mod._map_lock(sid, wait_s=0.05)
             self.assertIsNotNone(first)
-            self.assertIsNone(mod._map_lock(sid, wait_s=0.05))  # 等待超窗放弃，不抢
+            self.assertIsNone(mod._map_lock(sid, wait_s=0.05))   # wait window exceeded, give up without preempting
             self.assertIsNone(mod._map_lock(sid, wait_s=0.05))
             lp = P(first[0])
             lp.write_text('other-holder-token', encoding='utf-8')
-            mod._release_lock(first)      # token 不匹配：不删后继的锁
+            mod._release_lock(first)       # token mismatch: do not delete a later holder's lock
             self.assertTrue(lp.exists())
             lp.write_text(first[1], encoding='utf-8')
             mod._release_lock(first)
@@ -523,7 +523,7 @@ else: sys.exit(1)
                 _os.environ.pop('RESPITE_TURN_STATE', None)
 
     def test_stale_request_receipt_and_rmw_lock(self):
-        # 第三轮①：同会话 R1 写暂停→R2 prompt→R1 完成——旧 gen 凭证不免催 R2
+# round three item 1: same session R1 write pauses -> R2 prompt -> R1 completes -- R1's old-gen receipt must not suppress R2
         import importlib.util as iu, time as _t, json as j
         from pathlib import Path as P
         import os as _os
@@ -539,10 +539,10 @@ else: sys.exit(1)
             gen2 = mod.mark_prompt(sid)
             self.assertGreater(gen2, gen1)
             mod.mark_store(sid, gen1)
-            self.assertFalse(mod.turn_stored(sid))     # R1 旧代凭证不免催 R2
+            self.assertFalse(mod.turn_stored(sid))      # R1's old-generation receipt does not suppress R2
             mod.mark_store(sid, gen2)
-            self.assertFalse(mod.turn_stored(sid))      # R2 当前代凭证免催
-            # ② 事务锁：持新鲜锁 → _map_update 保守放弃；解锁后可用
+            self.assertFalse(mod.turn_stored(sid))       # R2's current-generation receipt suppresses
+# (2) transaction lock: holding a fresh lock -> _map_update conservatively abandons; usable after unlock
             lock = mod._map_lock(sid, wait_s=0.05)
             self.assertIsNotNone(lock)
             self.assertFalse(mod._map_update(sid, {'store_ts': _t.time(), 'store_req_ts': gen2}))
@@ -553,13 +553,13 @@ else: sys.exit(1)
                 _os.environ['RESPITE_TURN_STATE'] = old
 
     def test_strict_envelope_id_and_schema(self):
-        # 第三轮②：数字 id 12345678、"a-------"（宽松 hex-连字符）→ unknown 不 Saved
+# round three item 2: numeric id 12345678 and "a-------" (loose hex-hyphen) -> unknown, not Saved
         for mode_key, stub_mode in (('numid', 'ok_numid'), ('dashid', 'ok_dashid')):
             out = self.call('store: strict fact', event='StoreReceipt', mode=stub_mode)
             self.assertIn('store unknown', out, mode_key)
             self.assertNotIn('Saved', out, mode_key)
             self.assertIn('Do NOT resend', out, mode_key)
-        # 回读三方 id 一致 + 原生字符串：summary 对但 entry.id 错/缺 → mismatch
+        # Read-back three-way id identity plus native strings: summary ok but entry.id wrong/missing -> mismatch
         out = self.call('store: strict fact ok', event='StoreReceipt', mode='show_wrongid')
         self.assertIn('DIFFERENT', out)
         self.assertNotIn('verified by read-back', out)
@@ -568,7 +568,7 @@ else: sys.exit(1)
         self.assertNotIn('verified by read-back', out)
 
     def test_stop_never_queries_engine(self):
-        # 复核整改：Stop 完全不再查询引擎——无归属的全库时间抑制已移除，也没有查库失败强迫续跑路径
+# review fix: Stop no longer queries the engine at all -- the unattributable whole-store time suppression is gone and there is no list-failure continuation path
         for mode in ('ok', 'recent', 'failed', 'malformed'):
             self.call(f'request before stop {mode}')
             self.assertEqual(json.loads(self.call(event='Stop', mode=mode))['decision'], 'block', mode)
@@ -579,7 +579,7 @@ else: sys.exit(1)
         self.assertEqual(json.loads(self.call(event='Stop', session='A'))['decision'], 'block')
         self.call('session B unrelated request', session='B')
         self.assertEqual(json.loads(self.call(event='Stop', session='B'))['decision'], 'block')
-        self.assertEqual(self.call(event='Stop', session='A'), '')  # A 的锁不被 B 消耗
+        self.assertEqual(self.call(event='Stop', session='A'), '')   # A's lock is not consumed by B
         self.call('session A second request', session='A')
         self.assertEqual(json.loads(self.call(event='Stop', session='A'))['decision'], 'block')
 
@@ -622,19 +622,19 @@ else: sys.exit(1)
     def test_stop_after_hook_store_does_not_query_engine(self):
         self.call('store: durable fixture fact', event='StoreReceipt')
         before = self.recorded()
-        self.assertTrue(json.loads(self.call(event='Stop'))['decision'] == 'block')  # 复核⑥：仍催
-        self.assertEqual(self.recorded(), before)  # 零引擎查询
+        self.assertTrue(json.loads(self.call(event='Stop'))['decision'] == 'block')   # review 6: still nudges
+        self.assertEqual(self.recorded(), before)   # zero engine queries
 
     def test_turn_receipt_suppression_is_request_scoped(self):
-        # 复核⑥：磁盘凭证免催已取消——Stop 不凭旧记录免催；同请求二次 Stop 由 latch 放行
+        # Review 6: disk-receipt suppression is cancelled -- Stop never suppresses from an old record; a second Stop for the same request is released by the latch
         self.call('store: durable fixture fact', event='StoreReceipt')
-        self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')  # 仍催
-        self.assertEqual(self.call(event='Stop', active=True), '')                  # latch：同请求一次
+        self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')  # still nudges
+        self.assertEqual(self.call(event='Stop', active=True), '')                  # latch: once per request
         self.call('another ordinary input without storing')
         self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')
 
     def test_stop_once_per_request_latch(self):
-        # DM-04：宿主未带 stop_hook_active 时，同一请求也至多催一次；新请求重新武装
+# DM-04: when the host sends no stop_hook_active the same request still nudges at most once; a new request re-arms
         self.call('ordinary input')
         self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')
         before = self.recorded()
@@ -644,7 +644,7 @@ else: sys.exit(1)
         self.assertEqual(json.loads(self.call(event='Stop'))['decision'], 'block')
 
     def test_receipt_suppression_is_session_scoped(self):
-        # 会话隔离：A 会话的写回执不免 B 会话的催存
+        # Session isolation: a write receipt in session A does not suppress the nudge for session B
         self.call('store: durable fixture fact', event='StoreReceipt', session='a')
         self.assertEqual(json.loads(self.call(event='Stop', session='b'))['decision'], 'block')
 
@@ -654,8 +654,8 @@ else: sys.exit(1)
         self.assertIn('parse_error', self.log.read_text(encoding="utf-8"))
 
     def test_readback_bad_details_keeps_saved_receipt(self):
-        # 二轮复核#2：show 回读的 details 非字典（数组/字符串）→ unavailable；
-        # 类型错误绝不允许掀翻整条已写回执（丢 Saved = 把已提交数据当没写）
+# round two #2: show read-back details that are not a dict (array/string) -> unavailable;
+# a type error must never tear down the whole written receipt (losing Saved = treating committed data as unwritten)
         for mode in ('show_badarr', 'show_badstr'):
             before = self.recorded()
             out = self.call('store: durable fixture fact', event='StoreReceipt', mode=mode)
@@ -665,8 +665,8 @@ else: sys.exit(1)
             self.assertEqual([a[0] for a in self.recorded()[len(before):]], ['remember', 'show'], mode)
 
     def test_remember_timeout_is_capped_by_remaining_budget(self):
-        # 二轮复核#3：remember 超时 = min(STORE_T, 剩余预算)（monotonic 共享截止）——
-        # 紧预算（3s 预算 → 进场仅剩 0.5s）不得按 STORE_T=18s 全窗死等（用耗时上界钉死）
+# round two #3: remember timeout = min(STORE_T, remaining budget) (shared monotonic deadline) --
+# a tight budget (3s budget -> only 0.5s left on entry) must not wait the full STORE_T=18s window (pinned by an elapsed upper bound)
         before = self.recorded()
         started = time.monotonic()
         out = self.call('store: tight budget fact', event='StoreReceipt', mode='hang',
@@ -678,7 +678,7 @@ else: sys.exit(1)
         self.assertLess(elapsed, 15, f'remember waited {elapsed:.1f}s - not capped by remaining budget')
 
     def test_exhausted_budget_skips_remember_entirely(self):
-        # 二轮复核#3：进场剩余预算 ≤0 → 连 remember 也不发（零引擎调用），直接 unknown
+# round two #3: remaining budget <=0 on entry -> even remember is skipped (zero engine calls) and it goes straight to unknown
         before = self.recorded()
         out = self.call('store: budget gone fact', event='StoreReceipt', extra_env={'RESPITE_HOOK_BUDGET_S': '2'})
         self.assertIn('store unknown', out)
@@ -687,9 +687,9 @@ else: sys.exit(1)
 
 
 class TurnStateIsolation(unittest.TestCase):
-    """二轮复核主项：凭证状态按会话独立文件 st_<sidkey>.json。
-    共享 turn_map 的跨进程 read-modify-write（B 读旧快照 → A 更新 → B 整体写回）
-    会把 A 的新请求凭证回滚成旧值——一次成功的原子 rename 只保证写完整，不保证事务。"""
+# round two main item: receipt state is a per-session file st_<sidkey>.json.
+# A shared turn_map's cross-process read-modify-write (B reads a stale snapshot -> A updates -> B writes everything back)
+# rolls A's new request receipt back to an old value -- one successful atomic rename guarantees a complete write, not a transaction.
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='dimcode-turnstate-')
@@ -712,25 +712,25 @@ class TurnStateIsolation(unittest.TestCase):
         return self.dir / ('st_' + self.hook._sid_key('sessA') + '.json')
 
     def _seed(self, session, prompt_ago=10.0, store_ago=5.0):
-        # 显式播种凭证时刻（相对 now 的过去偏移，prompt 在前 store 在后）：与真实时钟粒度无关，
-        # 任何平台/任何 tick 下「真实 mark_prompt 时刻 > 播种 store_ts」恒成立
+# seed receipt timestamps explicitly (past offsets relative to now, prompt before store): independent of the real clock granularity,
+# "real mark_prompt time > seeded store_ts" always holds on any platform and tick
         now = time.time()
         self.assertTrue(self.hook._map_update(
             session, {'prompt_ts': now - prompt_ago, 'store_ts': now - store_ago,
-                      'store_req_ts': now - prompt_ago}))  # 同代凭证（三轮复核①语义）
-        self.assertTrue(self.hook._write_gen_marker(session, now - prompt_ago))  # ④①真值链：标记同步
+                      'store_req_ts': now - prompt_ago}))   # same-generation receipt (round three item 1 semantics)
+        self.assertTrue(self.hook._write_gen_marker(session, now - prompt_ago))   # 4 item 1 truth chain: the marker is in sync
 
     def test_b_write_cannot_rollback_a_new_prompt(self):
-        # 复核点名的交错：A 旧 prompt_ts/store_ts → B 读旧快照 → A 新请求更新 → B 写回。
-        # 共享 map 下 B 的整体写回会把 A 回滚成旧值（旧 store 被误认本轮已写而跳过存储检查）；
-        # 每会话独立文件下 A 的新请求状态原样保留——旧 store 不免催。
+# the review-flagged interleaving: A had old prompt_ts/store_ts -> B reads the stale snapshot -> A's new request updates -> B writes back.
+# with a shared map B's full write-back would roll A back to the old values (the old store would look stored this turn and the store check would be skipped);
+# with a per-session file A's new request state is preserved as-is -- the old store does not suppress.
         h = self.hook
-        self._seed('sessA')                        # 旧轮凭证：store_ts=now-5
+        self._seed('sessA')                         # old turn's receipt: store_ts=now-5
         self.assertFalse(h.turn_stored('sessA'))
-        h.mark_prompt('sessA')                     # A 新真实请求（= B 读旧快照之后的 A-update）
+        h.mark_prompt('sessA')                      # A's new real request (= the A-update after B read the stale snapshot)
         self.assertFalse(h.turn_stored('sessA'))
         snapshot = self._a_file().read_bytes()
-        h.mark_prompt('sessB')                     # B-write：恢复执行、更新自己的条目并写回
+        h.mark_prompt('sessB')                      # B-write: resume, update its own entry and write back
         h.mark_store('sessB')
         h.mark_prompt('sessB')
         h.mark_store('sessB')
@@ -740,11 +740,11 @@ class TurnStateIsolation(unittest.TestCase):
                          'A rolled back to the old prompt/store pair - stale store would suppress Stop')
         names = sorted(p.name for p in self.dir.iterdir())
         self.assertNotIn('turn_map.json', names)
-        # 每会话恰一个状态文件（.gen 标记与 .lock 为伴生运行时文件，不计入）
+# exactly one state file per session (the .gen marker and .lock are companion runtime files and not counted)
         self.assertEqual(len([n for n in names if n.startswith('st_') and n.endswith('.json')]), 2)
 
     def test_a_fresh_receipt_survives_b_updates(self):
-        # 反向交错：A 刚写成功的凭证不被 B 的更新抹掉（否则会造成多余催存）
+# reverse interleaving: A's just-written receipt is not erased by B's update (which would cause a redundant nudge)
         h = self.hook
         self._seed('sessA')
         snapshot = self._a_file().read_bytes()
@@ -755,11 +755,11 @@ class TurnStateIsolation(unittest.TestCase):
 
     def test_new_prompt_after_store_no_longer_suppresses(self):
         h = self.hook
-        self._seed('sessA')                        # 旧轮已存 → 免催
+        self._seed('sessA')                         # old turn already stored -> suppresses
         self.assertFalse(h.turn_stored('sessA'))
-        h.mark_prompt('sessA')                     # 新真实请求：prompt_ts>store_ts → 旧回执不免催
+        h.mark_prompt('sessA')                      # new real request: prompt_ts>store_ts -> the old receipt does not suppress
         self.assertFalse(h.turn_stored('sessA'))
-        self._seed('sessA')                        # 新一轮：prompt 在前、store 在后 → 重新免催
+        self._seed('sessA')                         # new turn: prompt first, store after -> suppresses again
         self.assertFalse(h.turn_stored('sessA'))
         h.mark_prompt('sessB')
         h.mark_store('sessB')

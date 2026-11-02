@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# respire 插件打包 —— CI 与本地共用同一口径。
-# 规范：zip 根=插件根（dimagent.cn 托管市场安装链：unzip 后根读 .codex-plugin/plugin.json）。
-# 产出 dist/respire-<version>-<yyyymmdd>.zip，zip 注释行为构建基线 commit。
-# stdout 恰两行：第一行 zip 路径，第二行 sha256。
-# 兼容 macOS bash 3.2：变量展开一律 ${VAR} 花括号隔离，邻近不放中文标点。
+# respire plugin packaging -- CI and local use the same recipe.
+# Spec: zip root = plugin root (the dimagent.cn hosted marketplace install chain reads .codex-plugin/plugin.json at the root after unzip).
+# Produces dist/respire-<version>-<yyyymmdd>.zip with the build baseline commit as the zip comment.
+# stdout is exactly two lines: the zip path, then the sha256.
+# macOS bash 3.2 compatible: always brace variable expansions as ${VAR} and never place CJK punctuation next to them.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

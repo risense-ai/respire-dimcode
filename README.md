@@ -1,146 +1,146 @@
 # respire
 
-> 吸即存，呼即取——给 Dim agent 装上本地加密记忆。
+> Store on the inhale, recall on the exhale -- local encrypted memory for the Dim agent.
 
-## Qoder 版
+## Qoder build
 
-Qoder 插件独立维护于 <https://github.com/risense-ai/respire-qoder>（含 release zip 与装法），本仓不再内嵌其副本。
+The Qoder plugin is maintained separately at <https://github.com/risense-ai/respire-qoder> (with its release zip and install steps); this repo no longer bundles a copy.
 
 
-`respire` 是 Dim 标准内容插件：以命令钩子把 [respire（CLI 名 rsrs）](https://www.npmjs.com/package/@rsrsai/cli) 记忆引擎挂进 agent 循环——每轮标题档自动召回、「记：」前缀交模型判重并选择父节点后存储。本地优先、端侧加密、云端 LWW 同步；**不带自定义安装脚本，按 Dim 插件市场标准安装**。
+`respire` is a standard Dim content plugin: it wires the [respire memory engine (CLI name rsrs)](https://www.npmjs.com/package/@rsrsai/cli) into the agent loop through command hooks -- a title-tier auto-recall every turn and a store triggered by the store prefix. Local-first, device-side encryption, cloud LWW sync; **no custom install script, installed the standard Dim marketplace way**.
 
-## 数据存储安全
+## Data storage safety
 
-1. **可离线使用**：记忆库是本机本地库，新配置即离线模式——不联网、不注册、不登录，召回与落库照常；离线期间的写入留在本地队列不丢，联网登录后随 autosync 自动补同步。
-2. **同步到云端的是密文**：记录在本地加密后才上传，服务端只存加密记录；解密、索引、检索全在设备端完成，服务端不需要模型、也拿不到账户解密密钥——云端与运维方可见的只有密文。
-3. **企业可自建同步服务器**：服务端 `respire-server` 支持私有化部署（Docker Compose + Postgres），可整套架在企业内网离线运行，把同步端点指向自建服务即可，数据不出企业网络（部署步骤见 respire-docs《自托管》）。
+1. **Works offline**: the memory store is local and a fresh configuration is offline mode -- no network, no registration, no login, and recall and writes keep working; writes made offline stay in the local queue and fill in through autosync after you log in.
+2. **Only ciphertext goes to the cloud**: records are encrypted locally before upload and the server keeps encrypted records only; decryption, indexing and retrieval all happen on the device, the server needs no model and never holds an account's decryption key -- the cloud and its operators see ciphertext only.
+3. **Enterprises can self-host the sync server**: `respire-server` supports private deployment (Docker Compose + Postgres) and can run entirely offline inside a corporate network. Point the sync endpoint at your own service and data never leaves the corporate network (see "Self-hosting" in respire-docs).
 
-## 不装模型完全可用（降级是一等公民）
+## Fully usable without a model (degradation is first class)
 
-- **注册、登录、同步、召回全不依赖端侧模型**——装完插件即可用，未装模型时引擎自动走词面档（等同 memlite 未配嵌入的效果）。
-- BGE-M3（约 1.1GB）是**纯可选增强**：想要更好的语义召回再 `rsrs model install && rsrs model activate m3`，插件检测到未装会在会话内提示一句，装与不装都不报错、不拦路。
+- **Registration, login, sync and recall never depend on an on-device model** -- installing the plugin is enough; without a model the engine automatically uses the lexical tier (equivalent to memlite with no embedding configured).
+- BGE-M3 (~1.1GB) is a **purely optional enhancement**: run `rsrs model install && rsrs model activate m3` for better semantic recall. When the plugin detects it is missing it hints once in the session; with or without it nothing errors and nothing blocks.
 
-## 安装（Dim 标准插件市场）
+## Install (standard Dim marketplace)
 
 ```bash
 git clone https://github.com/risense-ai/respire-dimcode.git && cd respire-dimcode
-python3 scripts/validate_plugin.py                     # 自检：结构/清单/hooks/敏感扫描
+python3 scripts/validate_plugin.py                     # self-check: structure/manifest/hooks/secret scan
 dim plugin marketplace add .agents/plugins/marketplace.json
 dim plugin install respire@risense
 ```
 
-升级（源仓拉新后覆盖装）：
+Upgrade (overwrite-install after pulling the source repo):
 
 ```bash
 git pull
-dim plugin marketplace upgrade risense     # 刷新注册源——marketplace 装的是注册时快照，缺此步装回旧版
+dim plugin marketplace upgrade risense     # refresh the registry source -- the marketplace installs a snapshot taken at registration, so without this it reinstalls the old version
 dim plugin install respire@risense --overwrite
 ```
 
-> 你的 `hooks/respire.config.json` 若需保留，从旧目录拷回后删掉即可按新默认走（旧默认值不会自动升级）。
+> If you need to keep your `hooks/respire.config.json`, copy it back from the old directory; deleting it falls back to the new defaults (old default values are not migrated automatically).
 
-引擎（rsrs CLI）缺失时插件会在会话内注入装法（`npm i -g @rsrsai/cli@latest`），可让 agent 代装。**新会话起生效。**
+When the engine (rsrs CLI) is missing the plugin injects the install command into the session (`npm i -g @rsrsai/cli@latest`) so the agent can install it. **Takes effect in a new session.**
 
-安装位置：`~/.dimcode/v2/plugins/respire/`（CN 发行版；Global 为 `~/.dim/v2/plugins/`，源码默认 `~/.agents/plugins/`——复制安装，改源码需重装）。
+Install location: `~/.dimcode/v2/plugins/respire/` (CN distribution; Global uses `~/.dim/v2/plugins/` and source defaults to `~/.agents/plugins/` -- installation is a copy, so source changes require a reinstall).
 
-验证：
+Verify:
 
 ```bash
-ls ~/.dimcode/v2/plugins/respire                 # .codex-plugin、hooks、skills 齐
-echo '{"prompt":"respire 测试"}' | python3 ~/.dimcode/v2/plugins/respire/hooks/respire.py UserPromptSubmit
+ls ~/.dimcode/v2/plugins/respire                 # .codex-plugin, hooks and skills all present
+echo '{"prompt":"respire test"}' | python3 ~/.dimcode/v2/plugins/respire/hooks/respire.py UserPromptSubmit
 ```
 
-两条 Dim 现状须知（已核源码）：`dim` **无** `plugin list` 子命令；`dim hooks list` 只列 project/user 两路配置、**不列插件钩子**——list 显示空不等于钩子没挂，插件本体在 TUI / Desktop 插件页查，生效与否以新会话实测为准。
+Two things to know about Dim today (source verified): `dim` has **no** `plugin list` subcommand, and `dim hooks list` only lists project/user configuration, **not plugin hooks** -- an empty list does not mean hooks are not attached. Check the plugin itself in the TUI / Desktop plugin page, and treat a live new session as the only proof that it works.
 
-## 定位：安装器 ＋ 管理器 ＋ 正常钩子
+## Role: installer plus manager plus normal hooks
 
-插件只做三件，装完自走一条生命周期：
+The plugin does three things and then runs a lifecycle on its own:
 
-1. **引擎未装时＝安装器**：SessionStart 把安装命令直接注给 agent 代跑（`npm i -g @rsrsai/cli@latest`＋权限兜底＋`rsrs --version` 验证），并顺手交代配置下一步（rsrs.rs 注册／`rsrs register`／模型可选）——无需用户手动操作；
-2. **检测就绪＝自动切正常钩子**：每轮实时探测，引擎装完**同会话内**即恢复简则、召回与「记：」存储请求；
-3. **管理器三档开关**（见下「启用与关闭」）。
+1. **Installer while the engine is missing**: SessionStart hands the install command to the agent to run (`npm i -g @rsrsai/cli@latest` plus permission fallbacks and an `rsrs --version` check) and also states the next configuration steps (rsrs.rs registration / `rsrs register` / optional model) -- no manual work for the user;
+2. **Normal hooks once it is ready**: it probes every turn, and once the engine is installed the rules, recall and explicit stores resume **within the same session**;
+3. **A three-level manager switch** (see "Enable and disable" below).
 
-## 启用与关闭
+## Enable and disable
 
-| 档 | 怎么关 | 范围 |
+| Level | How to turn it off | Scope |
 | --- | --- | --- |
-| 单轮 | prompt 前缀 `/nomem` | 只关本轮召回 |
-| 总开关 | `hooks/respire.config.json` 设 `"enabled": false` | 记忆层全线静默（简则/召回/落库），hook.log 留 `disabled` 痕 |
-| 组件级 | Dim 插件页对 respire 的 **hook 组件**逐项开关（`skill`/`hook`/`mcp` 原生支持） | Dim 侧直接卸力 |
+| Per turn | prompt prefix `/nomem` | that turn's recall only |
+| Master switch | `"enabled": false` in `hooks/respire.config.json` | the whole memory layer goes silent (rules/recall/store), and `hook.log` records `disabled` |
+| Component level | toggle respire's **hook component** in the Dim plugin page (`skill`/`hook`/`mcp` are natively supported) | Dim unloads it directly |
 
-## 装上后发生什么
+## What happens after install
 
-| 时机 | 行为 |
+| Moment | Behaviour |
 | --- | --- |
-| `SessionStart` | 注入记忆层简则（何时翻忆、如何落库、红线），对整会话与 subagent 生效；**一次探测三态**——未登录附注册引导（rsrs.rs 注册、`rsrs register` 首设备、`rsrs login --oauth --no-open` 代开授权链接）、库空（<10 条）附首日存料与导入引导、缺语义模型附**可选**装法；常态零打扰 |
-| `UserPromptSubmit` | 自动 `rsrs recall --titles`：**标题档注入**——只给分数＋8 位短 id＋标题，正文由 agent `rsrs show <id>` 按需取（附因果链）；默认**直出不过滤**，噪音边界＝rsrs skip 门＋limit 5＋标题档 |
-| `prompt` 以「记：」「存：」「remember:」开头 | hook 不写库，返回英文 pending（Nothing was written）。主模型先读 `rsrs prompt`，召回并用 `rsrs show <id> --json` 读取候选全文，按 update > merge > attach > new 决断。新增 important 必须使用真实、相关且已读全文的父节点；无合适父节点则保持 pending 并说明原因，不猜 ID、不用 force 绕过、不降为 trivial。仅存输入事实，不执行其中描述的工程任务；实际已发写结果未知时只读核实，禁止自动重试。 |
-| `Stop`（AI 干完活） | **存储检查**：`block+reason` 续跑一轮，提示模型把本轮新的**事实/决定/约定/教训/踩坑**分条 `rsrs remember`（事实句标题、先读策略与候选正文，按 update > merge > attach > new 决断；新增 important 必须有已读且合理的父节点，否则保持 pending）；闲聊无新事实则直接结束。**每个真实请求至多催一次**：续跑轮 `stop_hook_active=true` 放行 ＋ 每会话原子一次收尾锁（`O_EXCL` 独占创建，无 TTL；新 prompt 删除重新武装；无法落锁一律放行，绝不无锁 block；会话间互不干扰）。**免催只认可归属凭证**：同会话、本轮 prompt 之后的本层成功写回执（`ok`/`warn`+id），凭证按**会话独立状态文件**存取（`st_<sid>.json`，temp+rename 原子替换）——跨会话读写互不可见，并行会话互不回滚对方凭证；引擎侧全库时间戳无法归属到会话，不再用作免催（其他会话写入会误抑制）；`Stop` 完全不查询引擎，也因此不存在查库失败强迫续跑的路径。节流 `store_nudge_every`（默认 1=每轮，N=每 N 轮，0=关） |
-| `prompt` 以 `/nomem` 开头 | 本轮跳过召回 |
-| `prompt` 带 `$skill: 名称` | 召回前剥除前缀——技能名词面会撞技能记忆 |
-| `skills/respire` | 按需加载的操作法（recall/remember/show/forget/sync 与信封解析要点）；技能提供操作说明；钩子触发召回和收尾，模型负责判重、选父节点和写入 |
+| `SessionStart` | Injects the memory-layer rules (when to recall, how to store, red lines), effective for the whole session and subagents; **one probe, three states** -- logged out adds registration guidance (rsrs.rs sign-up, `rsrs register` on the first device, `rsrs login --oauth --no-open` for an authorization link), an empty store (<10 records) adds first-day and import guidance, a missing semantic model adds the **optional** install note; silent in the normal case |
+| `UserPromptSubmit` | Automatic `rsrs recall --titles`: **title-tier injection** -- only the score, 8-char short id and title, and the agent pulls the body on demand with `rsrs show <id>` (with the causal chain); **raw output, no filtering** by default, so the noise bound is the rsrs skip gate plus limit 5 plus the title tier |
+| `prompt` starting with the store trigger or `remember:` | Writes directly with `rsrs remember … --importance important` and returns a receipt, **as a state machine**: `ok`/`warn` -> **written** (warn attaches the engine warning, e.g. an unresolved parent -- never a failure, never a resend), followed by a `show` read-back (verified / mismatch / unavailable labelled honestly); `pending` -> **not written**, restates candidates (with short ids) and engine-suggested actions (update > merge > attach > store in full; read candidate bodies with `show` before deciding); timeout/bad receipt -> **unknown**, where the receipt allows read-only verification only (`rsrs list`/`rsrs show`) and **forbids a resend** (duplicate-write risk; `ok`/`warn` without a valid id or with a malformed summary also map to unknown, neither failure nor success); the read-back is a **full verification** (id, title and complete body) worded honestly; remember/show/list share one hook time budget (`time.monotonic()` monotonic deadline, immune to clock changes; if the remaining budget is <=0 on entry, even remember is skipped and it goes straight to unknown). The receipt hard-requires the AI to extract a "subject + action + result" fact sentence and replace the provisional title with `retitle` |
+| `Stop` (the AI finished) | **Store check**: `block+reason` continues for one turn and asks the model to store this turn's new **facts/decisions/agreements/lessons/pitfalls** one by one with `rsrs remember` (fact-sentence titles, decide on dedup first); plain chat with no new facts ends directly. **At most one nudge per real request**: the continuation turn's `stop_hook_active=true` allows, plus a per-session atomic one-shot latch (`O_EXCL` exclusive create, no TTL; a new prompt deletes and re-arms it; if the lock cannot be taken always allow, never block without it; sessions never interfere). **Suppression only accepts an attributable receipt**: this layer's successful write receipt for the same session after this turn's prompt (`ok`/`warn` plus id), stored in a **per-session state file** (`st_<sid>.json`, temp+rename atomic replace) -- cross-session reads are mutually invisible and parallel sessions never roll back each other's receipts; an engine-side whole-store timestamp cannot be attributed to a session and is no longer used for suppression (another session's write would wrongly suppress); `Stop` makes no engine query at all, so there is no list-failure continuation path either. Throttled by `store_nudge_every` (default 1 = every turn, N = every Nth, 0 = off) |
+| `prompt` starting with `/nomem` | Skips recall for this turn |
+| `prompt` carrying `$skill: name` | The prefix is stripped before recall -- the skill name collides lexically with skill memory |
+| `skills/respire` | The on-demand playbook (recall/remember/show/forget/sync plus envelope parsing notes); **the skill is documentation only, every action is driven by the hooks** |
 
-## 首次使用 · 三件事
+## First use: three things
 
-1. **注册登录**（开箱即用，不依赖模型）：[rsrs.rs](https://rsrs.rs) 注册 → 本机 `rsrs register`；日常 `rsrs login` 浏览器授权；autosync 常开，`rsrs sync` 手动同步，`rsrs status` 查态。
-2. **导入既有记忆与规则（一次成库，LLM 代抽）**：开个 Dim 新会话粘贴下面整段——
+1. **Register and log in** (works out of the box, no model needed): sign up at [rsrs.rs](https://rsrs.rs) then run `rsrs register` on this machine; day to day use `rsrs login` for browser authorization; autosync stays on, `rsrs sync` syncs manually and `rsrs status` shows state.
+2. **Import existing memory and rules (one pass, the LLM extracts)**: open a new Dim session and paste the whole block below --
 
-   > 请把本机 Dim 的既有规则与记忆导入 respire：逐个读取——`~/AGENTS.md`（家目录规则，若在）、你常用项目根下的 `AGENTS.md`、`~/.dimcode/v2/skills/*/SKILL.md`、`~/.dimcode/v2/hooks.json`、`~/.dimcode/v2/notes/` 与 `plan-drafts/` 下的 md；抽出可复用的事实、约定、教训与红线（口令、证件号、卡号、私钥一律排除、只记位置），去重后用 `rsrs remember` 分条存入（`--importance important`、标题按事实句；判重给候选先决断挂靠或合并），存完给我一份清单。
+   > Import this machine's existing Dim rules and memory into respire: read one by one -- `~/AGENTS.md` (home-directory rules, if present), the `AGENTS.md` at the root of your usual projects, `~/.dimcode/v2/skills/*/SKILL.md`, `~/.dimcode/v2/hooks.json`, and the markdown under `~/.dimcode/v2/notes/` and `plan-drafts/`; extract reusable facts, agreements, lessons and red lines (exclude credentials, ID numbers, card numbers and private keys entirely; record only their location), deduplicate, then store them one by one with `rsrs remember` (`--importance important`, fact-sentence titles; on a dedup candidate decide first whether to attach or merge), and give me an inventory list when done.
 
-   空库首日 SessionStart 会注入同一线索。
-3. **端侧模型（可选增强）**：`rsrs model install && rsrs model activate m3`——不装完全可用，想要更好语义召回再装。
+   On an empty store, the first-day SessionStart injects the same lead.
+3. **On-device model (optional enhancement)**: `rsrs model install && rsrs model activate m3` -- fully usable without it; install it only if you want better semantic recall.
 
-## 调优（可选）
+## Tuning (optional)
 
-`~/.dimcode/v2/plugins/respire/hooks/respire.config.json`（缺失即全默认，改完新会话生效；**不涉及登录与账号**）：
+`~/.dimcode/v2/plugins/respire/hooks/respire.config.json` (missing means all defaults; changes take effect in a new session; **never involves login or account settings**):
 
-| 字段 | 默认 | 含义 |
+| Field | Default | Meaning |
 | --- | --- | --- |
-| `rsrs` | `""` | 引擎路径；空 = 自动探测（PATH → `~/.local/bin` → `~/.rsrs/bin`） |
-| `recall_threshold` | `0.0` | 召回下限；**0=默认关（rsrs 直出）**，设正数才启用过滤 |
-| `recall_limit` | `5` | 取前 N 条 |
-| `min_prompt_chars` | `2` | 1 字才跳，2 字起即查 |
-| `session_rules` | `true` | 是否注入 SessionStart 简则 |
-| `budget_chars` | `1500` | 单轮注入总预算（标题行远短于此） |
-| `enabled` | `true` | **总开关**：false=全线静默 |
-| `store_nudge_every` | `1` | Stop 存储检查节流：1=每轮、N=每 N 轮、0=关（每轮=多一轮模型小调用） |
-| `log` | `true` | `hooks/hook.log` 留痕（超 256KB 清轮） |
+| `rsrs` | `""` | Engine path; empty = auto-detect (PATH -> `~/.local/bin` -> `~/.rsrs/bin`) |
+| `recall_threshold` | `0.0` | Recall floor; **0 = off by default (raw rsrs output)**, a positive value enables filtering |
+| `recall_limit` | `5` | Keep the first N hits |
+| `min_prompt_chars` | `2` | 1 char is skipped, 2 chars triggers a query |
+| `session_rules` | `true` | Whether to inject the SessionStart rules |
+| `budget_chars` | `1500` | Total injection budget per turn (title lines are far shorter) |
+| `enabled` | `true` | **Master switch**: false = everything silent |
+| `store_nudge_every` | `1` | Stop store-check throttle: 1 = every turn, N = every Nth, 0 = off |
+| `log` | `true` | `hooks/hook.log` trail (cleared above 256KB) |
 
-过滤策略：**默认不设阈值**——三层已框住噪音：rsrs skip 门、limit 5、标题档。历史教训：阈值 0.56→0.31 每降一次都是真相关被拦的补救，漏召代价远大于多看两行标题。
+Filtering policy: **no threshold by default** -- three layers already bound the noise: the rsrs skip gate, limit 5 and the title tier. History: every lowering of the threshold (0.56 -> 0.31) was a fix for genuinely relevant hits being blocked, and a missed recall costs far more than two extra title lines.
 
-## 卸载
+## Uninstall
 
-`dim` 无 `plugin uninstall` 子命令（已核源码）——搬移式卸载，**目标必须在 plugins 根之外**（根内带 manifest 的残留目录会被 Dim 当插件继续加载、钩子双跑）：
+`dim` has no `plugin uninstall` subcommand (source verified), so uninstalling means moving the directory, and **the target must be outside the plugins root** (a leftover directory with a manifest inside the root keeps being loaded as a plugin and the hooks run twice):
 
 ```bash
 mv ~/.dimcode/v2/plugins/respire ~/.dimcode/v2/plugins-backup/respire.removed-$(date +%s)
 ```
 
-## 设计要点
+## Design notes
 
-- **fail-open**：hook 任何异常 → 空 stdout + `exit 0`，永不拦会话；失败必留痕于 hook.log
-- **纯文本输出**：stdout 即 `additionalContext`，没有误拦面
-- **标题档注入**：`recall --titles` 只回 id/score/title，正文交 `show` 按需拉取；`superseded_by` 标「已被取代」
-- **先判后存**：前缀 hook 零写入；模型读策略与候选正文后决断，新增 important 必须有已读且合理的父节点，无合适父节点则保持 pending。
-- **`${CLAUDE_PLUGIN_ROOT}` 占位符**：Dim 运行时替换为插件安装根，跨机器自洽；command 带 `python3 || python` 回退与 `commandWindows` 通道
-- **包内自检**：`python3 scripts/validate_plugin.py`（结构/清单/hooks 形状/可编译/fail-open/敏感扫描），分发前必跑
+- **fail-open**: any hook exception -> empty stdout + `exit 0`, never blocking a session; failures always leave a trail in hook.log
+- **Plain-text output**: stdout is `additionalContext`, so there is no mis-blocking surface
+- **Title-tier injection**: `recall --titles` returns id/score/title only and the body is pulled on demand with `show`; `superseded_by` is marked "superseded"
+- **Respects the decide-then-store design**: writes never carry `--force`, and `pending` candidates are relayed verbatim for the model to decide
+- **`${CLAUDE_PLUGIN_ROOT}` placeholder**: the Dim runtime substitutes the plugin install root, so it is portable across machines; commands use the `python3 || python` fallback and the `commandWindows` channel
+- **In-package self-check**: `python3 scripts/validate_plugin.py` (structure/manifest/hooks shape/compilability/fail-open/secret scan), always run before distribution
 
-## 已知边界
+## Known limits
 
-- **召回质量是引擎上限**：用词鸿沟下 BGE-M3 可能漏召真条——简则已约束模型「命中不贴题换词补查」（同义词/上位词/英文词分路）
-- **冷启动窗**：runtime 冷启＋模型加载实测 7s+，故 hook timeout 20s、recall 14s、probe 10s；探测失败时 SessionStart 注入诊断段
-- **PostCompact 不可重注**（Dim 协议该事件仅副作用）：长会话压缩后简则如丢失，开新会话即复
-- **留痕**：`hooks/hook.log` 每事件一行（ts/ev/out/ms/d 含 query 摘要），按行复盘「灵不灵」
+- **Recall quality is the engine's ceiling**: across a vocabulary gap BGE-M3 can miss a real record -- the rules already require the model to retry with different wording (synonyms/hypernyms/English terms) when a hit does not fit
+- **Cold-start window**: runtime cold start plus model load measured at 7s+, hence hook timeout 20s, recall 14s, probe 10s; on probe failure SessionStart injects a diagnostic section
+- **PostCompact cannot re-inject** (the Dim protocol makes that event side-effect only): if the rules are lost after a long session is compacted, opening a new session restores them
+- **Trail**: `hooks/hook.log` has one line per event (ts/ev/out/ms/d with a query summary) for per-line review
 
-## 测试
+## Test
 
 ```bash
-python3 scripts/validate_plugin.py   # 包结构自检
-bash tests/test_hooks.sh             # 行为只读断言（简则/召回/清洗/引导），不碰库
-bash tests/test_hooks.sh --store     # 兼容旧参数，前缀仍不写库
+python3 scripts/validate_plugin.py   # package structure self-check
+bash tests/test_hooks.sh             # read-only behaviour assertions (rules/recall/redaction/guidance), no store writes
+bash tests/test_hooks.sh --store     # adds the write probe (writes the real store, checks the receipt, self-cleans with rsrs forget)
 ```
 
-rsrs 无 data-dir 隔离（runtime 单例＋全局 client.json），故前缀测试始终不写库，旧 --store 参数只验证 pending 交接。
+rsrs has no data-dir isolation (runtime singleton plus a global client.json), so write tests only run when explicitly enabled, and they write and forget immediately.
 
 ## License
 
@@ -148,14 +148,14 @@ MIT
 
 ## GitHub Actions CI/CD
 
-PR/main 在 Linux、Windows、macOS 执行包自检、全桩隔离行为/版本测试和发布策略测试，再验证源码归档。CI 入口为 `python tests/test_ci.py` 与 `python -m unittest discover -s tests -p test_release.py -v`，不会运行旧 `test_hooks.sh` 的真实引擎/写探针段。测试使用临时 HOME、配置、数据、日志和引擎桩；普通输入必须召回成功，死桩/坏 JSON 必须无法通过正向对照，凭据轮零引擎调用且无日志泄漏。
+For PRs and main, Linux, Windows and macOS run the package self-check, the fully stubbed isolated behaviour/version tests and the release policy tests, then verify the source archive. The CI entry points are `python tests/test_ci.py` and `python -m unittest discover -s tests -p test_release.py -v`; the real-engine/write-probe sections of the legacy `test_hooks.sh` are not run. Tests use a temporary HOME, config, data, log and engine stub; ordinary input must recall successfully, a dead stub or bad JSON must fail the positive control, and a credential turn must make zero engine calls with no log leak.
 
-沿用不带 v 的三段版本标签及原插件根目录布局；ZIP 名仍为 `respire-版本-YYYYMMDD.zip`，日期固定取源提交 UTC 日期以使重试稳定。ZIP 注释为精确提交 SHA；标签、manifest、hook VERSION（及已有市场版本字段）必须一致。旧 `scripts/package.sh` 保留供原本地流程使用，新 Actions 只归档已提交文件，不执行标签中的代码。
+It keeps the three-part version tag without a `v` and the original plugin root layout; the ZIP name stays `respire-version-YYYYMMDD.zip` with the date fixed to the source commit's UTC date so retries are stable. The ZIP comment is the exact commit SHA; the tag, manifest and hook VERSION (plus the existing marketplace version field) must agree. The old `scripts/package.sh` stays for the original local flow; the new Actions only archives committed files and never executes code from the tag.
 
-发布/恢复：正常推送新版本标签触发；已有标签可从 Actions → release → Run workflow 选择 main，显式填写 tag 和完整 expected_sha。流程校验远端既有标签与 main 祖先关系，不移动标签、不用新 main 冒充旧代码。只接受同来源、同校验和的已有资产；补缺失，不覆盖冲突，Release 同时提供 ZIP 与 SHA256SUMS。
+Release/recovery: a normal new-version tag push triggers it; for an existing tag, use Actions -> release -> Run workflow, choose main and fill in the tag with the full expected_sha. The flow verifies the remote tag and its ancestry to main, never moves the tag and never passes off new main as old code. It only accepts existing assets with the same provenance and checksum, fills in what is missing and never overwrites a conflict; the Release provides both the ZIP and SHA256SUMS.
 
-默认 contents:read、checkout 不持久化凭据；仅独立受控发布 job 使用 GITHUB_TOKEN 的 contents:write。无新 secret/PAT/OAuth，不使用 pull_request_target，fork PR 不可发布。同版 tag/恢复共用并发锁。原 plugin-zip artifact 名、cleanup-receipt、清理策略/脚本保留，清理收据等待检查、打包和发布消费者结束。
+Defaults are contents:read with no persisted checkout credentials; only the separate controlled release job uses contents:write on GITHUB_TOKEN. No new secret/PAT/OAuth, no `pull_request_target`, and fork PRs cannot release. The same-version tag and recovery share a concurrency lock. The original plugin-zip artifact name, cleanup-receipt and cleanup policy/scripts are kept, and cleanup receipts wait for the check, package and release consumers to finish.
 
-三平台桩测试不等于真实 Dim 宿主、GUI 派发或安装后的解释器回退验收；旧完整测试套件与作者称基线失败仍不作为独立通过证据。
+Three-platform stub tests are not acceptance of a real Dim host, GUI dispatch or the interpreter fallback after install; the old full suite and the author-declared baseline failures are still not independent proof of passing.
 
-0.5.6 已有正式 Release，本维护改动不重发、不移动其标签或覆盖其资产。
+0.5.6 already has an official Release; this maintenance change does not re-release, move its tag or overwrite its assets.
