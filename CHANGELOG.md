@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.18 — 2026-11-03
+
+- Migrate the documented engine install entry from the deprecated `@rsrsai/cli` package to `rsrs-cli` in the README; the `rsrs` command name is unchanged.
+
 ## 0.5.17 — 2026-11-02
 
 - Normalize redirections before command identification; require verified placement for inherited-importance merges and important updates.
