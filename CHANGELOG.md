@@ -1,161 +1,138 @@
 # Changelog
 
-## 0.5.15 — 2026-11-01 · 提示词精简为纯英文记忆纪律
+## 0.5.16 — 2026-11-02
+
+- Remove all non-ASCII (CJK) text from hooks, tests, scripts, docs and manifests. Behaviour is
+  unchanged: patterns that must match Chinese user input or existing Chinese data now use
+  `\u` escapes (`STORE_PREFIX` triggers, `SECRET_RE`/redaction keywords, sentence separators in
+  `extract_title`, the credential-guard test fixtures).
+
+## 0.5.15 — 2026-11-01 · prompts reduced to a pure-English memory discipline
+
+- **`RULES` and `SKILL.md` became pure English and keep only the memory discipline**: recall first (the round's first tool call), recall before fixing on an error, the causal chain with `chain --depth 3`, dedup order update->merge->attach->create, titles as subject+action+result, the trust boundary, no secrets, honest failure reporting; CLI parsing tutorials, account/sync guidance, data-safety marketing and operation checklists were removed.
+- **SessionStart extra hint sections removed**: `LOGIN_NUDGE`, `EMPTY_NUDGE`, `NO_MODEL`, `PROBE_FAIL` plus `check_model()` and their fake backdoors are gone; `probe_status()` is now a diagnostic trail only and appends no hint.
+- **`NO_RSRS` trimmed**: only the engine install and registration steps remain; the recovery-code and `--super` prohibitions were not relaxed.
+- Test assertions updated: `test_hooks.sh` and `test_ci.py` now match the new English first line and drop assertions for the removed hint sections.
+
+## 0.5.14 — 2026-11-01 · round six final: remove disk-receipt suppression
+
+- **`turn_stored` is always False (review 6 final)**: across events (UserPromptSubmit and Stop are two separate processes) there is no reliable disk identity for the current request -- every unlink/write/lock failure-recovery window was disproved round by round (4, 5 and 6, including the reviewer-named "permissions restored before Stop after a failed delete" and "a delete outside the lock recreated by an in-flight writer"). Per the review recommendation the suppression optimisation was **removed**: de-dup goes back to latch semantics (created with O_EXCL at nudge time, deleted by the next real prompt). The receipt is still returned honestly to the model and the state file remains a diagnostic trail. **Also review #3**: deleted the stale `test_common_write_failure_poisons_old_receipt`, which a later same-name test method shadowed so it never ran.
+
+## 0.5.13 — 2026-11-01 · round five residual fix (unlink as the invalidation primitive)
+
+- **Delete-first receipt invalidation (review 5 residual)**: `mark_prompt` deletes this session's state file before any write -- unlink needs no disk space, so even when all three writes fail the old receipt is physically deleted and the current request's Stop cannot suppress from it (without waiting for the next mark_prompt); if the unlink itself fails because the directory is unwritable, Stop's latch_claim fails the same way and allows. Tests follow the reviewer's order: an old successful receipt -> mark_prompt called while all three writes fail -> write capability returns but mark_prompt is not called and POISON is not hand-written -> Stop does not suppress (the state-file assertion confirms deletion) -> normal registration recovers.
+
+## 0.5.12 — 2026-11-01 · round five review fix (safe degradation when the marker writes fail together)
+
+- **POISON invalidation token (review 5)**: `mark_prompt` no longer ignores a write failure -- if either the gen marker or the state write fails it immediately writes the `+inf` invalidation token through the same blind-write path; `turn_stored` returns False for POISON or any finite old receipt, keeping the suppression optimisation off (bias to nudging, never suppress from an old disk receipt). The first mark_prompt after recovery rewrites the marker and restores it. Full-flow tests: old receipt -> both writes fail -> degraded -> no suppression; normal registration recovers; POISON alone switches it off.
+
+## 0.5.11 — 2026-11-01 · round four review fix (safe invalidation on registration failure + lock ownership)
+
+- **Safe invalidation when registration fails (review #1)**: a new gen marker file `st_<sid>.gen` (blind temp+rename write, no read-modify-write, no lock, immune to contention) is the truth about "the current request"; `mark_prompt` writes the marker before updating the state file; `turn_stored` requires prompt_ts == marker == store_req_ts -- when a new request fails to register (lock window exceeded / write failure) the marker has already advanced, so **the old receipt is invalid immediately and never wrongly suppresses** (test: an old request was stored -> holding the lock makes registration fail -> release -> no suppression; the recovery path suppresses again after normal registration).
+- **Lock ownership (review #2)**: mtime age preemption removed; the lock content is a unique token and `_release_lock` deletes only a token-matching lock -- it never preempts a live lock and never deletes a later holder's lock (test: a second process gives up past the window while the holder is alive; a token mismatch deletes nothing). Giving up past the wait window is safe (combined with the gen marker).
+- Tests: CI 39/39 (+2: registration-failure invalidation and recovery, lock ownership; the isolation suite adapted to the gen-marker truth chain).
+
+## 0.5.10 — 2026-11-01 · round three review fix (same-session request isolation + strict envelope)
+
+- **Receipt bound to the request generation (review #1)**: `mark_prompt` returns a gen, `do_store` captures it on entry, `mark_store(session, gen)` records `store_req_ts`, and `turn_stored` requires `store_req_ts == prompt_ts` -- a late-completing old request in the same session never suppresses a new one (two-way barrier test).
+- **Same-session RMW transaction lock (review #1)**: `_map_lock` is an O_EXCL lockfile (mtime>5s staleness fallback, give up past the wait window) that serialises read-modify-write inside it, so a stale snapshot write-back can never roll back a new prompt (mutual-exclusion test).
+- **Strict ID type and whitelist (review #2)**: `summary.id` must be a native string (the JSON number 12345678 is no longer `str()`-coerced); the whitelist tightens to a UUID or 16+ hex chars (`a-------` is rejected) -> unknown.
+- **Read-back three-way id plus native types (review #2)**: verified requires summary.id and entry.id to both be strings and === the target id, and title/content to be native strings (the number 42 never matches "42") -- a wrong entry.id, a missing field or a non-string body is always mismatch with Saved retained.
 
 ### Changed
 
-- **`RULES` 与 `SKILL.md` 改为纯英文、只留记忆纪律**：召回先行（回合首个工具调用）、遇障先 recall、因果链 `chain --depth 3`、判重 update→merge→attach→create、标题主语+动作+结果、信任边界、密钥禁入、失败诚实；删除 CLI 解析教程、同步账号引导、数据安全宣传、操作流程清单等非记忆内容。
-- **删除 SessionStart 附加提示段**：`LOGIN_NUDGE`、`EMPTY_NUDGE`、`NO_MODEL`、`PROBE_FAIL` 及 `check_model()`、对应伪造后门一并移除；`probe_status()` 现仅作诊断留痕，不再追加任何提示。
-- **`NO_RSRS` 精简**：只保留装引擎与注册两步，恢复码与 `--super` 禁令不放宽。
-- 测试断言同步：`test_hooks.sh`、`test_ci.py` 改匹配新英文首行并删除已移除提示段的断言。
+- Tests: CI 37/37 (+2 test blocks: request generation / RMW lock, strict envelope numeric id / hyphen string / wrong entry.id / numeric body).
 
-## 0.5.14 — 2026-11-01 · 第六轮终案：取消磁盘凭证免催
+## 0.5.9 — 2026-11-01 · review round 2 (PR #6 review round 2)
+
+### Fixed
+
+- **Per-session state files kill the cross-process RMW rollback (round two main item)**: the shared `turn_map.json` is gone -- it read the whole table, changed its own session and wrote everything back with temp+rename and no cross-process lock; the reproducible interleaving "B reads a stale snapshot -> A's new request updates prompt_ts and re-arms -> B writes everything back" rolled A back to the old values, so A's Stop mistook the old write for a write this turn and skipped the store check (the reverse interleaving lost a new receipt and caused a redundant nudge). One successful rename guarantees a complete write, not a transaction. It is now a per-session `st_<sidkey>.json` (temp+rename atomic replace), so none of B's writes can structurally touch A's entry; an old store receipt is invalid after a new prompt (prompt_ts>store_ts -> no suppression). The `_SCRIPT_DIR` definition accidentally deleted in the 0.5.8 refactor is restored (previously, with no `RESPITE_TURN_STATE` in production, the prompt hook raised NameError -> fail-open and the whole recall chain was dead).
+- **Readback bad-details type guard (round two #2)**: a `show` read-back whose `details` is not a dict (array/string etc.) is no longer `.get()`-ed directly -- an AttributeError would tear down the whole written receipt (losing Saved); it is reported as **unavailable**, keeping the written fact and pointing to read-only verification.
+- **Shared monotonic deadline (round two #3)**: the `do_store` budget uses the `time.monotonic()` clock (immune to clock changes); the `remember` timeout is `min(STORE_T, remaining budget)`, so a tight budget no longer waits the full 18s window; if the remaining budget is <=0 on entry even `remember` is skipped and it returns unknown directly (no resend).
 
 ### Changed
 
-- **`turn_stored` 恒 False（复核⑥终案）**：跨事件（UserPromptSubmit→Stop 为两个独立进程）不存在可靠的磁盘当前请求身份——unlink/写/锁失败-恢复窗口逐轮证伪（④⑤⑥，含复审点名的「删除失败后 Stop 前恢复权限」与「锁外删除被在途写者重建」）。按复审建议**取消免催优化**：防重唯一依据回归 latch 语义（nudge 时 O_EXCL 创建、下一次真实 prompt 删除）。回执仍诚实输出给模型；状态文件保留为诊断轨迹。**另修复审#3**：删除被后置同名测试方法覆盖的旧 `test_common_write_failure_poisons_old_receipt`（Python 类保留后者导致前者从未执行）。
+- Version 0.5.8 -> 0.5.9 (hook `VERSION`, `.codex-plugin/plugin.json`, and a `version` added to the `.claude-plugin/marketplace.json` entry); `.gitignore` gains the `st_*.json`/`st_*.json.*.tmp` runtime artifacts.
+- Tests: CI 35/35 (+6 round-two counterexamples: B's write-back does not roll back A's new prompt state, A's new receipt is not erased by B's update, an old store does not suppress after A's new prompt (seeded-time assertion, independent of real clock granularity), bad show details (array/string) keep Saved plus unavailable, a tight budget caps the remember timeout (with an elapsed upper bound), an exhausted entry budget makes zero engine calls; the hang stub now detaches stdio/CWD first -- after a Windows .cmd shell timeout kill, a grandchild holding the pipe/CWD breaks both the timeout and cleanup, taking the suite from 75s to 17s); bash stays 75/0 (existing Stop/lock/suppression behaviour untouched).
 
-## 0.5.13 — 2026-11-01
-## 0.5.13 — 2026-11-01 · 第五轮残余整改（unlink 失效原语）
-
-### Fixed
-
-- **删除优先的凭证失效（复核⑤残余）**：`mark_prompt` 先删除本会话状态文件再执行任何写——unlink 不需要磁盘空间，三写全失败时旧凭证仍被物理删除，当前请求 Stop（不必先有下一次 mark_prompt）不可能凭旧记录免催；unlink 因目录不可写失败时 Stop 的 latch_claim 同样失败而放行。测试按复审点名顺序：旧成功凭证→三写全失败期间调用 mark_prompt→恢复写但不调用 mark_prompt/不手写 POISON→Stop 不免催（状态文件断言已删除）→正常登记恢复。
-
-## 0.5.12 — 2026-11-01
-## 0.5.12 — 2026-11-01 · 第五轮复核整改（标记共同写失败的安全降级）
+## 0.5.8 — 2026-11-01 · maintainer review fix (PR #6 review)
 
 ### Fixed
 
-- **POISON 失效令牌（复核#1残余）**：`mark_prompt` 不再忽略写失败——gen 标记或状态文件任一写失败时立即写失效令牌（+inf）：`turn_stored` 对任何有限旧凭证返回 False，**免催优化保持关闭**（宁可多催，不凭旧磁盘凭证免催）。降级与正常标记同一写路径；连降级也失败时旧标记无新写者、恢复后首个 `mark_prompt` 必然重写。反例测试：旧同代凭证→共同写失败（旧文件保持相等可读）→POISON 写入即关闭免催→完全恢复后免催恢复。
-
-## 0.5.11 — 2026-11-01
-## 0.5.12 — 2026-11-01 · 第五轮复核整改（标记写失败安全降级）
-
-### Fixed
-
-- **POISON 失效令牌（复核⑤）**：`mark_prompt` 不再忽略写失败——gen 标记或状态任一写失败时立即写 `+inf` 失效令牌（同一盲写路径）；`turn_stored` 对 POISON 或任何有限旧凭证返回 False——免催优化保持关闭（宁可多催，不凭旧磁盘凭证免催）；恢复后首个 mark_prompt 重写标记即恢复。完整流程测试：旧凭证→共同写失败→降级→不免催；正常登记恢复；POISON 单独关闭。
-
-## 0.5.11 — 2026-11-01
-## 0.5.11 — 2026-11-01 · 第四轮复核整改（登记失效安全 + 锁所有权）
-
-### Fixed
-
-- **登记失败安全失效（复核#1）**：新增 gen 标记文件 `st_<sid>.gen`（盲写 temp+rename，无 RMW 无锁不受竞争影响）=「当前请求」真值；`mark_prompt` 先写标记再更新状态文件；`turn_stored` 要求 prompt_ts == 标记 == store_req_ts——新请求登记失败（锁超窗/写失败）时标记已推进，**旧凭证立即失效，绝不错误免催**（测试：旧请求已存→持锁令登记失败→释放→不免催；恢复路径正常登记后免催恢复）。
-- **锁所有权（复核#2）**：移除 mtime 年龄抢占；锁内容=唯一 token，`_release_lock` 只删 token 一致的锁——不抢活锁、不删后继持有者的锁（测试：活持有者期间第二进程超窗放弃；token 不匹配不删）。等待超窗放弃是安全的（配合 gen 标记）。
+- **One-shot completion latch rework (review #1)**: the single-session `.store_turn` state became a **per-session lock file** (`O_CREAT|O_EXCL` atomic -- of concurrent Stop calls only one takes the lock; no TTL, still held after 25 hours, only a new real prompt deletes and re-arms it; an A->B->A interleaving does not lose the lock); when the lock cannot be taken (unwritable state dir etc.) always allow -- never block without it. prompt_ts/store_ts live in a best-effort per-session map (temp+rename atomic replace, pruned by count only); a map failure only loses the optimisation.
+- **A malformed list result is no longer treated as success (review #2)**: `details` not an array, or non-empty without a parseable timestamp -> treated as a failed query (a new entry is not attributed to this write).
+- **Shared hook budget (review #3)**: remember/read-back/read-only verification share one deadline (`RESPITE_HOOK_BUDGET_S`, default 20s, with 2.5s output headroom); after a slow bad receipt the remainder is too small and it goes straight to unknown with no extra list.
+- **Receipt/read-back hardening (review #4)**: `ok`/`warn` without a valid id (hex/uuid whitelist check), a malformed summary (type-guarded, no exception) or an unknown status all map to **unknown** (no resend); the read-back became a **full verification**: the returned id must equal the written id, the title must match and the complete body must match to be called verified, otherwise mismatch/unavailable is labelled honestly.
+- **Attributable suppression receipts (review #1 acceptance completion)**: removed "an engine-wide newest write later than the prompt suppresses" (unattributable to a session; B's write would wrongly suppress A); `Stop` makes no engine query at all, so there is no list-failure continuation path either; `/nomem` still counts as a new request (mark moved earlier) and only skips recall, not the re-arm.
 
 ### Changed
 
-- 测试：CI 39/39（+2：登记失败失效+恢复、锁所有权；隔离套件适配 gen 标记真值链）。
+- Tests: CI 29/29 (+ review-required counterexamples: an A->B->A interleaving does not lose the lock, the lock is not released without a new prompt, missing/garbage id or a bad summary -> unknown, a skip receipt is not a failure, a wrong id or tail tampering -> mismatch, a slow bad receipt plus a tight budget -> zero extra calls, a bad-schema list is not attributed); bash 75/0 (Stop scenarios follow the new contract: engine writes no longer suppress plus the single-nudge count, a bad envelope/dead process still nudges, an unwritable state dir allows, a 25-hour lock is still held, a new request and /nomem re-arm; `RESPITE_TURN_STATE` uses a Windows-native visible path); `.gitignore` gains the `.latch_*`/`turn_map.json` runtime artifacts.
 
-## 0.5.10 — 2026-11-01
-## 0.5.10 — 2026-11-01 · 第三轮复核整改（同会话请求隔离＋严格信封）
-
-### Fixed
-
-- **请求代凭证绑定（复核#1）**：`mark_prompt` 返回 gen；`do_store` 入口捕获；`mark_store(session, gen)` 记 `store_req_ts`；`turn_stored` 要求 `store_req_ts == prompt_ts`——同会话旧请求延迟完成不免催新请求（双向屏障测试）。
-- **同会话 RMW 事务锁（复核#1）**：`_map_lock` O_EXCL lockfile（mtime>5s 陈旧兜底、等待超窗放弃）内串行化读改写——旧快照写回不可能回滚新 prompt（持锁互斥测试）。
-- **严格 ID 类型与白名单（复核#2）**：`summary.id` 必须原生字符串（JSON 数字 12345678 不再 str() 强转）；白名单收紧为 UUID 或 16+ 位 hex（`a-------` 拒绝）→ unknown。
-- **回读三方 id + 原生类型（复核#2）**：verified 需 summary.id、entry.id 均为字符串且===目标 id；title/content 必须原生字符串（数字 42 不与 "42" 匹配）——错 entry.id、缺失、非字符串正文一律 mismatch，Saved 保留。
-
-### Changed
-
-- 测试：CI 37/37（+2 测试块：请求代/RMW 锁、严格信封数字 id/横线串/错 entry.id/数字正文）。
-
-## 0.5.9 — 2026-11-01
-## 0.5.9 — 2026-11-01 · 复核二轮整改（PR #6 review round 2）
+## 0.5.7 — audit fix: write-result state machine, Stop fail-open, request-level suppression receipt (DM-01~DM-04)
 
 ### Fixed
 
-- **每会话独立状态文件，杀死跨进程 RMW 回滚（二轮主项）**：共享 `turn_map.json` 废除——它先读整表、改自己会话、temp+rename 整体写回，无跨进程锁；可复现交错「B 读旧快照 → A 新请求更新 prompt_ts 并重武装 → B 整体写回」会把 A 回滚成旧值，A 的 Stop 便会把旧写入误认本轮已写而跳过存储检查（反向交错丢新写凭证、造成多余催存）。一次成功 rename 只保证写完整，不保证事务。现为每会话 `st_<sidkey>.json`（temp+rename 原子替换），B 会话的任何写在结构上碰不到 A 的条目；新 prompt 后旧 store 凭证失效（prompt_ts>store_ts → 不免催）。0.5.8 重构时误删的 `_SCRIPT_DIR` 定义一并恢复（此前生产环境未设 `RESPITE_TURN_STATE` 时 prompt 钩子会 NameError→fail-open，召回整链失效）。
-- **readback 坏 details 类型防护（二轮#2）**：`show` 回读的 `details` 非字典（数组/字符串等）不再直接 `.get()`——AttributeError 会掀翻整条已写回执（Saved 丢失）；如实归 **unavailable**，保留已写事实并指引只读核验。
-- **monotonic 共享截止（二轮#3）**：`do_store` 预算改 `time.monotonic()` 单调钟（不受系统时钟回拨影响）；`remember` 超时取 `min(STORE_T, 剩余预算)`——紧预算不再按 18s 全窗死等；进场剩余≤0 时连 `remember` 也不发，直接按结果未知回执（禁止重发）。
+- **DM-02 write-result state machine**: the explicit-store receipt no longer accepts only `status=ok` -- `warn` with a valid id means **written with warnings**, reported honestly with the error summary, never misreported as "not accepted" and never prompting a resend (the old implementation treated committed data as a failure and invited duplicate writes); a timeout/bad receipt maps to **unknown**, where the receipt requires "verify read-only with `rsrs list`/`rsrs show`, never resend", and an instant bad receipt triggers an automatic `list` cross-check reporting a possible write.
+- **DM-01 Stop fail-open**: when the `list` store query fails, times out, returns a bad envelope or hits a dead process, allow directly instead of blocking -- a memory-layer fault must not block the end of the main task.
+- **DM-03 request-level suppression receipt**: the global "any write in the last 10 minutes" suppression is gone (it suppressed across turns by mistake); it is now `.store_turn` -- only a successful write receipt for the same session after this turn's prompt, or an engine-side write, suppresses. A pending receipt keeps the candidate short ids and the full set of engine-suggested actions (update > merge > attach > store, 7.2); after ok/warn a `show` read-back verifies the write (R11).
+- **DM-04 one-shot latch**: when the host sends no `stop_hook_active`, the same request still blocks at most once; a new prompt re-arms it.
 
 ### Changed
 
-- 版本 0.5.8 → 0.5.9（hook `VERSION`、`.codex-plugin/plugin.json`、`.claude-plugin/marketplace.json` 插件条目补 `version`）；`.gitignore` 增 `st_*.json`/`st_*.json.*.tmp` 运行期产物。
-- 测试：CI 35/35（+6 条二轮反例：B 写回不回滚 A 新 prompt 状态、A 新写凭证不被 B 更新抹掉、A 新 prompt 后旧 store 不免催（播种时刻断言，与真实时钟粒度无关）、show 坏 details（数组/字符串）保留 Saved＋unavailable、紧预算封顶 remember 超时（含耗时上界）、进场预算耗尽零引擎调用；hang 桩改先卸 stdio/CWD——Windows 下 .cmd 壳超时 kill 后孙进程攥管道/CWD 会让超时与用例清理双双失效，全套 75s→17s）；bash 75/0 不变（既有 Stop/锁/免催行为未动）。
+- Tests: the CI stub whitelist upgraded to an ordered call sequence (remember -> show read-back chain) and the spy supports warn/pending/silent/hang/show_mismatch; 8 contract tests added and the old wrong expectations flipped (failed -> block used to be treated as correct). The bash suite moved to a portable python engine stub (.cmd wrapper) and Windows pseudo-failures were fixed, from a baseline 54/7 to 71/0 (--store 74/0). `RESPITE_TEST_FAST`/`RESPITE_TURN_STATE` test backdoors; README behaviour table updated; `.gitignore` gains `.store_turn`.
 
-## 0.5.8 — 2026-11-01 · 维护者复核整改（PR #6 review）
+## 0.5.6 — suspected-credential blocking plus unified install/registration wording
 
-### Fixed
+- Added an input-side suspected-credential scan (`contains_secret`): when a prompt matches a private-key block, high-risk tokens such as sk-, ghp_, github_pat_, xox, Bearer, or an assignment of `password|passphrase|private key|passwd|api key|token|secret`, that prompt is neither recalled nor stored and a `SECRET_SKIP` note is injected -- completing the same defence as the codex/pi/dsh side (previously the rules only said "do not store credentials" with no machine gate).
+- Install and registration wording aligned with the CLI: `npm i -g rsrs-cli@latest` (the official new-user entry; `@rsrsai/cli` still works); registration is a direct local `rsrs register` with no website step (in NO_RSRS / LOGIN_NUDGE / PROBE_FAIL; the old "sign up at rsrs.rs first" was outdated).
+- Tests 48 -> 50: two checks for "a suspected credential is not recalled / not stored"; the install and registration assertions follow the new wording.
 
-- **一次收尾锁重构（复核#1）**：`.store_turn` 单会话状态改为**每会话独立锁文件**（`O_CREAT|O_EXCL` 原子独占——并发 Stop 只有一个能落锁；锁无 TTL，25 小时后仍占用，只有新真实 prompt 删除重新武装；A→B→A 交错不丢锁）；无法落锁（状态目录不可写等）一律放行——绝不无锁 block。prompt_ts/store_ts 存于尽力维护的 per-session map（temp+rename 原子替换，仅按数量收敛），map 失败只损失免催优化。
-- **坏结构 list 不再当成功（复核#2）**：`details` 非数组、或非空却无可解析时间戳 → 按查询失败处理（不归属新条目给本次写入）。
-- **共享 hook 预算（复核#3）**：remember/回读/只读核实共用截止时间（`RESPITE_HOOK_BUDGET_S`，默认 20s，预留 2.5s 输出余量）；慢坏回执后剩余不足直接 unknown，不再追加 list。
-- **回执/回读加固（复核#4）**：`ok`/`warn` 缺有效 id（hex/uuid 白名单校验）、畸形 summary（类型防护不抛异常）、未知 status 一律归 **unknown**（禁重发）；回读改为**全量核验**：返回 id 必须=写入 id、标题相等、完整正文相等，才称 verified；否则 mismatch/unavailable 如实标注。
-- **免催凭证可归属化（复核#1 验收补全）**：移除「引擎全库最新写入晚于 prompt 即免催」（无法归属会话，B 写入会误免催 A）；`Stop` 完全不查询引擎——也因此不存在查库失败强迫续跑的路径；`/nomem` 仍算新请求（mark 提前），只跳召回不跳收尾重武装。
+## 0.5.5 — three data-storage-safety notes (injected with the install guidance)
 
-### Changed
+- README gained a "Data storage safety" section: (1) works offline (local store; recall and writes work without network, registration or login, and offline writes queue up for sync); (2) only ciphertext goes to the cloud (encrypted locally before upload, the server holds no decryption key); (3) enterprises can self-host the sync server (respire-server, Docker Compose + Postgres on an internal network, data never leaves the corporate network).
+- Hook-side placement: the three notes went into `NO_RSRS` (engine missing, injected at install time), **not into `RULES`** -- the per-session rules do not repeat the sales pitch, it is only stated at install/missing-engine time.
+- SKILL.md gained a "Data safety (user-facing)" section (say it plainly when asked); the manifest `description` and `interface.longDescription` follow suit (visible on the plugin page before install).
 
-- 测试：CI 29/29（+复核要求反例：A→B→A 交错不丢锁、锁无新 prompt 不释放、缺 id/垃圾 id/坏 summary→unknown、skip 回执非失败、错 id/尾部篡改回读→mismatch、慢坏回执+紧预算→零追加调用、坏 schema list 不归属）；bash 75/0（Stop 场景同步新契约：引擎写入不再免催＋单次 nudge 计数、坏信封/死进程仍催、状态目录不可写放行、25 小时锁仍占用、新请求与 /nomem 重武装；`RESPITE_TURN_STATE` 落锁目录改 Windows 原生可见路径）；`.gitignore` 增 `.latch_*`/`turn_map.json` 运行期产物。
+## 0.5.4 — Stop throttle now asks the engine (agent-side stores allow as well)
 
-## 0.5.7 — 审计整改：写结果状态机＋Stop fail-open＋请求级免催凭证（DM-01~DM-04）
+- Stop's "already stored within 10 minutes" originally scanned only this layer's hook.log store events, which only the hook-side explicit-store path writes -- a direct `rsrs remember` by the agent was invisible, so in practice the event count was always 0, the branch never fired and every turn nudged (the Qoder side fixed the same defect in 0.6.3).
+- Added `engine_last_store()`: `rsrs list --limit 3 --json` takes the max of `updated_at`/`created_at` and compares it with 600s, leaving `stored_recent_skip src=engine` on a hit; a 6s timeout or any exception always allows and nudges as usual, and the log fast path is kept.
+- Tests 45 -> 48: a recent engine store does not nudge / a stale one still nudges / the trail records src=engine; the throttle assertions use the stale/fresh engine stubs instead of depending on a real store.
+- Released with this version: the `respire-qoder/` subdirectory was removed; the Qoder build is maintained only in the separate repo risense-ai/respire-qoder, and README/CHANGELOG now point there.
 
-### Fixed
+## 0.5.3 — prompts in English plus marketplace metadata and icon
 
-- **DM-02 写结果状态机**：「记：」回执不再只认 `status=ok`——`warn`+有效 id 是**已写入带警告**，如实回执附错误摘要，不误报「未接受」、不引导重发（旧实现把已提交数据当失败，诱发重复写）；超时/坏回执归为 **unknown**，回执明令「`rsrs list`/`rsrs show` 只读核实、禁止重发」，秒回坏回执自动 `list` 核对并报告可能已写。
-- **DM-01 Stop fail-open**：查库 `list` 失败/超时/坏信封/死进程时直接放行，不再 block——记忆层故障不得拦主任务结束。
-- **DM-03 请求级免催凭证**：废除「近 10 分钟任意写入」全局抑制（跨轮误抑制）；改为 `.store_turn`——同会话、本轮 prompt 之后的成功写回执或引擎侧写入才免催。pending 回执保留候选短 id 与引擎建议动作全量（改＞并＞挂＞存，§7.2）；ok/warn 后 `show` 写后回读核验（R11）。
-- **DM-04 一次收尾锁**：宿主未带 `stop_hook_active` 时同一请求也至多 block 一次；新 prompt 重新武装。
+- SKILL.md, the injected hook rules and the store/pending/recall receipts all became English; Chinese prefixes such as the store trigger remain supported.
+- The Dim manifest `defaultPrompt` and `shortDescription` became English; test assertions follow the English text and no longer depend on a locale or a real store.
+- `interface.logo` points at the new `assets/logo.png` (512x512, shown in the Dim plugin list); top-level `author`/`homepage`/`repository`/`license`/`keywords` and an English `interface.longDescription` were added.
+- CI: `.github/workflows/release.yml` -- a tag push (`*.*.*`) packages and publishes a Release (sharing `scripts/package.sh`); main/PR pushes run the self-check; `workflow_dispatch` produces an artifact dry run.
+- The package manifest includes `assets/`.
 
-### Changed
+## 0.5.0 — store after finishing (the Stop hook)
 
-- 测试：CI 桩白名单升级为有序调用序列（remember→show 回读链），spy 支持 warn/pending/silent/hang/show_mismatch；新增 8 个契约测试并翻转旧错误期望（failed→block 曾被当正确结果）。bash 套件换可移植 python 引擎桩（.cmd 包装），修 Windows 伪故障，基线 54/7 → 71/0（--store 74/0）。`RESPITE_TEST_FAST`/`RESPITE_TURN_STATE` 测试后门；README 行为表同步；`.gitignore` 增 `.store_turn`。
+- Lifecycle completed: the user speaks -> recall is injected (UserPromptSubmit); **the AI finishes -> the store check is injected** (Stop) --
+  `block+reason` continues for one turn and asks for this turn's new facts/decisions/agreements/lessons/pitfalls one by one with `rsrs remember`
+- Loop guard: the continuation turn's `stop_hook_active=true` allows; measurement showed plain-text injection is invisible at Stop, so block+reason is required
+- Throttle `store_nudge_every` (every turn by default, tunable to N or 0); no nudge when something was stored within 10 minutes
+- Test logs and throttle state are isolated through `RESPITE_LOG`/`RESPITE_NUDGE_STATE`; 47 assertions
 
-## 0.5.6 — 疑似凭据拦截＋安装/注册口径统一
-## 0.5.6 — 疑似凭据拦截＋安装/注册口径统一
+## 0.4.0 — installer and manager
 
-- 新增输入侧疑似凭据扫描（`contains_secret`）：prompt 命中私钥块 / sk-、ghp_、github_pat_、xox、Bearer 等高危 token / `密码|口令|私钥|passwd|api key|token|secret` 赋值形态时，该条不召回也不落库，注入 `SECRET_SKIP` 提示——补齐与 codex/pi/dsh 侧一致的防线（此前简则只写"禁存口令"而无机器门）
-- 安装与注册口径对齐 CLI 现状：`npm i -g rsrs-cli@latest`（官方新用户入口，`@rsrsai/cli` 继续可用）；注册为本机 `rsrs register` 直注、无网站步骤（NO_RSRS / LOGIN_NUDGE / PROBE_FAIL 三处，原"先去 rsrs.rs 注册"为过时表述）
-- 测试 48 → 50：疑似凭据不召回 / 不落库两条；安装与注册断言同步新口径
+- **Role narrowed**: the plugin is an installer plus a manager plus normal hooks -- while the engine is missing it hands the install command and the next configuration steps to the agent to run (probing live every turn, usable as soon as installed); once ready it runs the normal hooks.
+- **Master switch** `enabled` (false = everything silent, `hook.log` records disabled); three management levels: `/nomem` per turn / `enabled` master / the Dim plugin page hook component toggle.
+- PROBE_FAIL gained the "brand-new machine not yet registered" branch; NO_RSRS became the install command plus configuration guidance.
+- The three-step upgrade must include `marketplace upgrade` (install uses the registration snapshot).
 
-## 0.5.5 — 数据存储安全三点说明（安装引导注入）
+## 0.3.0 — standard Dim plugin form
 
-- README 新增「数据存储安全」节：① 可离线使用（本地库，不联网不注册不登录照常召回与落库，离线写入留队列联网补同步）② 上云只有密文（本地加密后上传，服务端无解密密钥）③ 企业可自建同步服务器（respire-server，Docker Compose + Postgres 内网部署，数据不出企业网络）
-- 钩子侧落点：三点说明并入 `NO_RSRS`（引擎未装、安装时注入），**不进 `RULES`**——每会话简则不重复宣讲，只在安装/缺引擎时说明
-- SKILL.md 增「Data safety (user-facing)」小节（用户问到直说）；清单 `description` 与 `interface.longDescription` 同步追加（插件页安装前可见）
+- Distribution moved to the standard Dim plugin marketplace: `dim plugin marketplace add .agents/plugins/marketplace.json` plus `dim plugin install respire@risense`; **the custom install.sh / uninstall.sh were removed**.
+- Package structure aligned with the spec: `.codex-plugin/plugin.json` (interface gained developerName/category/capabilities/websiteURL/defaultPrompt), hooks under `hooks/hooks.json`, commands with the `python3 || python` fallback chain and `commandWindows`.
+- Added `scripts/validate_plugin.py` (structure/manifest/hooks shape/compilability/fail-open/secret scan).
+- **Degradation is first class**: registration, login, sync and lexical recall never depend on an on-device model; BGE-M3 is a purely optional enhancement (`rsrs model install && rsrs model activate m3`).
+- Threshold off by default (raw rsrs output); the `$skill:` identification prefix is stripped; hook.log trail; cold-start timeout window.
 
-## 0.5.4 — Stop 节流改问引擎（agent 侧落库也放行）
+## 0.2.x — first version (manual install script era)
 
-- Stop「近 10 分钟已落库则不再催」原本只扫本层 hook.log 的 store 事件，而该事件只有钩子侧「记：」路径会写——agent 直接 `rsrs remember` 看不见，实测事件恒 0、分支从未命中，每轮都催（Qoder 侧 0.6.3 已修同一缺陷）
-- 新增 `engine_last_store()`：`rsrs list --limit 3 --json` 取 `updated_at`/`created_at` 最大值与 600s 比对，命中留痕 `stored_recent_skip src=engine`；6s 超时与异常一律放行照常催，日志快路径保留
-- 测试 45 → 48：引擎近期落库不催 / 陈旧仍催 / 留痕 src=engine；节流断言改走 stale/fresh 引擎桩，去掉真机库依赖
-- 随版发布：移除 `respire-qoder/` 子目录，Qoder 版只在独立仓 risense-ai/respire-qoder 维护，README/CHANGELOG 已改指
-
-## 0.5.3 — 提示词英文化＋市场元数据与图标
-
-- SKILL.md、钩子注入简则、落库/待决/召回回执全部改为英文；保留「记：」等中文前缀兼容
-- Dim 插件清单 `defaultPrompt` 与 `shortDescription` 改为英文；测试断言同步英文并去 locale/实时库依赖
-- `interface.logo` 指向新增 `assets/logo.png`（512x512，Dim 插件列表显示）；顶层补 `author`/`homepage`/`repository`/`license`/`keywords`，interface 补 `longDescription`（英文）
-- CI：`.github/workflows/release.yml`——push tag（`*.*.*`）自动打包出 Release（`scripts/package.sh` 共用口径）；push main/PR 跑自检；`workflow_dispatch` 出 artifact 演练
-- 打包清单含 `assets/`
-
-## 0.5.0 — 干完活也要存（Stop 钩子）
-
-- 生命周期补齐：用户说话→注入召回（UserPromptSubmit）；**AI 干完活→注入存储检查**（Stop）——
-  `block+reason` 续跑一轮，提示把本轮新事实/决定/约定/教训/踩坑分条 `rsrs remember`
-- 规范防循环：续跑轮 `stop_hook_active=true` 放行；实测纯文本注入在 Stop 不可见、必须 block+reason
-- 节流 `store_nudge_every`（默认每轮，可调 N/0）；近 10 分钟已落库则不再催
-- 测试日志与节流状态可经 `RESPITE_LOG`／`RESPITE_NUDGE_STATE` 隔离；47 断言
-
-## 0.4.0 — 安装器与管理器
-## 0.4.0 — 安装器与管理器
-
-- **定位收束**：插件＝安装器＋管理器＋正常钩子——引擎未装时把安装命令与配置下一步注给 agent 代跑（同会话实时探测、装完即用）；就绪后自动走正常钩子
-- **总开关** `enabled`（false=全线静默，hook.log 留 disabled 痕）；管理三档：`/nomem` 单轮／`enabled` 总控／Dim 插件页 hook 组件开关
-- PROBE_FAIL 补「全新机器尚未注册」分支口；NO_RSRS 升级为安装指令＋配置引导
-- 升级三连须含 `marketplace upgrade`（install 吃注册时快照）
-
-## 0.3.0 — Dim 标准插件形态
-## 0.3.0 — Dim 标准插件形态
-
-- 分发改走 Dim 标准插件市场：`dim plugin marketplace add .agents/plugins/marketplace.json` + `dim plugin install respire@risense`；**移除自定义 install.sh / uninstall.sh**
-- 包结构对齐规范：`.codex-plugin/plugin.json`（interface 补 developerName/category/capabilities/websiteURL/defaultPrompt）、hooks 归 `hooks/hooks.json`、command 带 `python3 || python` 回退链与 `commandWindows`
-- 新增 `scripts/validate_plugin.py` 自检（结构/清单/hooks 形状/可编译/fail-open/敏感扫描）
-- **降级为一等公民**：注册、登录、同步与词面召回均不依赖端侧模型；BGE-M3 纯可选增强（`rsrs model install && rsrs model activate m3`）
-- 阈值默认关闭（rsrs 直出）；`$skill:` 指认前缀剥除；hook.log 留痕；冷启动超时窗
-
-## 0.2.x — 初版（手装脚本时代）
-
-- memlite→respire(rsrs) 引擎换装、标题档召回、判后即存落库、三态会话引导
+- memlite -> respire(rsrs) engine swap, title-tier recall, decide-then-store, three-state session guidance.

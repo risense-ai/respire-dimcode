@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""respire 插件自检 —— 结构与规范校验（对齐 Dim 插件包要求），零第三方依赖。
+"""respire plugin self-check -- structure and spec validation (matching Dim plugin package requirements), no third-party dependencies.
 
-用法: python3 scripts/validate_plugin.py   （退出码 0=通过；任一 FAIL=1）
+Usage: python3 scripts/validate_plugin.py   (exit 0 = pass; any FAIL = 1)
 """
 import json
 import os
@@ -63,7 +63,7 @@ REQUIRED = [
 for rel in REQUIRED:
     read_text(rel)
 
-# manifest 规范
+# manifest spec
 manifest = parse_json(".codex-plugin/plugin.json")
 if manifest:
     if manifest.get("name") != "respire":
@@ -86,7 +86,7 @@ if manifest:
     else:
         ok("manifest interface core fields")
 
-# hooks 规范：事件合法、command 走 \${CLAUDE_PLUGIN_ROOT}、含回退链与 Windows 通道
+# hooks spec: valid events, command uses ${CLAUDE_PLUGIN_ROOT}, includes the fallback chain and the Windows channel
 hooks_cfg = parse_json("hooks/hooks.json")
 if hooks_cfg:
     events = hooks_cfg.get("hooks") or {}
@@ -114,7 +114,7 @@ if hooks_cfg:
                     fail(f"{ev}: timeout must be positive")
     ok("hooks.json shape")
 
-# 主脚本可编译 + 铁律在（fail-open 恒 exit 0）
+# main script compiles and the iron rules hold (fail-open always exits 0)
 try:
     py_compile.compile(os.path.join(ROOT, "hooks/respire.py"), doraise=True)
     ok("respire.py compiles")
@@ -126,7 +126,7 @@ if src and "sys.exit(0)" not in src:
 elif src:
     ok("fail-open exit present")
 
-# marketplace 清单
+# marketplace manifest
 mp = parse_json(".claude-plugin/marketplace.json")
 if mp:
     if mp.get("name") != "risense":
@@ -137,7 +137,7 @@ if mp:
     else:
         ok("marketplace lists respire")
 
-# 敏感模式扫描（分发前自检）
+# secret pattern scan (pre-distribution self-check)
 SECRET = re.compile(r"sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY")
 for dirpath, dirnames, filenames in os.walk(ROOT):
     dirnames[:] = [d for d in dirnames if d not in {".git", "__pycache__", "node_modules"}]
