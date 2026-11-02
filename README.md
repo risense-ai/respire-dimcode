@@ -65,7 +65,7 @@ The plugin does three things and then runs a lifecycle on its own:
 | Level | How to turn it off | Scope |
 | --- | --- | --- |
 | Per turn | prompt prefix `/nomem` | that turn's recall only |
-| Master switch | `"enabled": false` in `hooks/respire.config.json` | the whole memory layer goes silent (rules/recall/store), and `hook.log` records `disabled` |
+| Master switch | `"enabled": false` in `hooks/respire.config.json` | automatic rules/recall/store guidance goes silent; the installed placement guard stays active, and `hook.log` records `disabled` |
 | Component level | toggle respire's **hook component** in the Dim plugin page (`skill`/`hook`/`mcp` are natively supported) | Dim unloads it directly |
 
 ## What happens after install
@@ -118,8 +118,8 @@ mv ~/.dimcode/v2/plugins/respire ~/.dimcode/v2/plugins-backup/respire.removed-$(
 
 ## Design notes
 
-- **fail-open**: any hook exception -> empty stdout + `exit 0`, never blocking a session; failures always leave a trail in hook.log
-- **Plain-text output**: stdout is `additionalContext`, so there is no mis-blocking surface
+- **fail-open for automatic guidance**: guidance errors remain silent and exit 0; identified PreToolUse memory writes deny on guard or parent-verification errors
+- **Output**: guidance is plain text; PreToolUse refusals use static JSON deny and exit 0
 - **Title-tier injection**: `recall --titles` returns id/score/title only and the body is pulled on demand with `show`; `superseded_by` is marked "superseded"
 - **Respects the decide-then-store design**: writes never carry `--force`, and `pending` candidates are relayed verbatim for the model to decide
 - **`${CLAUDE_PLUGIN_ROOT}` placeholder**: the Dim runtime substitutes the plugin install root, so it is portable across machines; commands use the `python3 || python` fallback and the `commandWindows` channel
@@ -141,6 +141,14 @@ bash tests/test_hooks.sh --store     # adds the write probe (writes the real sto
 ```
 
 rsrs has no data-dir isolation (runtime singleton plus a global client.json), so write tests only run when explicitly enabled, and they write and forget immediately.
+
+### PreToolUse write guard
+
+Before visible exec/Bash calls, the hook parses literal rsrs remember/update/attach arguments and every command in a sequence. It rejects force bypasses, important creation without a parent, explicit empty or invalid parents, and identified dynamic or wrapped memory writes. Use one explicit literal command when parsing is refused. Non-memory commands and read-only calls remain silent.
+
+A non-empty parent must be an ID that an existing runner can verify with `rsrs --client-only show <id> --json`. Verification has a 16-second total budget inside the 20-second hook timeout; missing runners, errors, malformed receipts and timeouts deny the write and leave placement pending. No runtime is started and the hook never writes memory. Denials contain only static English guidance and exit 0, so the Python fallback cannot swallow them. Automatic guidance still honors the enabled switch; this placement guard remains active while the hook component is installed.
+
+Host-visible `memory_remember`, `memory_update` and `memory_attach` MCP names, including `mcp__<server>__memory_*`, are denied because the hook cannot bind an arbitrary MCP server to the local target profile. Use an explicit rsrs command through the guarded shell instead. This is not a general shell sandbox: aliases, arbitrary external scripts, hidden API calls and tools that do not emit PreToolUse remain outside its visibility. A verified parent exists; the model must still read its full body and judge relevance before writing. Actual model termination and installation behavior require host verification.
 
 ## License
 
